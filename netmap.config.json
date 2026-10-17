@@ -1,13 +1,13 @@
 {
   "_readme": [
-    "Настройки «Карты сети». Здесь описано, какие программы и адаптеры карта узнаёт. Править можно без изменения кода; после правки перезапустите карту.",
-    "adapterKinds - список видов сетевых адаптеров. Проверяется сверху вниз, побеждает первое совпадение (поэтому NetBird стоит выше общего WireGuard). Адаптер, не подошедший ни под один вид, считается physical (если это настоящее железо) или other.",
-    "  kind  - внутреннее имя. happ, clash, anyconnect, tailscale, netbird - зарезервированы: у них есть собственные сборщики данных (процессы, файлы настроек, консольные клиенты). Любое другое имя - универсальный вид: карта покажет адаптер, его маршруты и узел назначения, но без данных программы.",
-    "  label - подпись на карте и в легенде. color - цвет.",
-    "  nameRx / descRx - регулярные выражения (без учёта регистра) для имени адаптера и его описания в Windows. Достаточно одного из двух.",
-    "  tun   - true, если программа перехватывает весь трафик (TUN-VPN). Влияет на замечания «два TUN одновременно» и «DNS перехвачен».",
-    "  vpn   - true, чтобы адаптер показывался, даже когда он отключён.",
-    "Пути могут содержать переменные окружения вида %APPDATA%."
+    "Settings of the network map. They describe which programs and adapters the map recognises. Edit freely without touching the code; restart the map after editing.",
+    "adapterKinds - the list of network adapter kinds. It is checked top to bottom and the first match wins (that is why NetBird is above the generic WireGuard). An adapter that matches no kind is treated as physical (real hardware) or other.",
+    "  kind  - internal name. happ, clash, anyconnect, tailscale, netbird are reserved: they have their own data collectors (processes, settings files, console clients). Any other name is a generic kind: the map shows the adapter, its routes and a destination node, but no data from the program.",
+    "  label - the caption on the map and in the legend. color - the colour.",
+    "  nameRx / descRx - regular expressions (case-insensitive) for the Windows adapter name and description. One of the two is enough.",
+    "  tun   - true if the program intercepts all traffic (a TUN VPN). It affects the findings about two TUNs at once and hijacked DNS.",
+    "  vpn   - true to show the adapter even while it is down.",
+    "Paths may contain environment variables such as %APPDATA%."
   ],
 
   "adapterKinds": [
@@ -29,14 +29,14 @@
   ],
 
   "processes": {
-    "_comment": "Регулярные выражения по имени процесса (без .exe). proxyRx - программы, слушающие локальный порт прокси (по ним строятся узлы «Прокси 127.0.0.1:порт»).",
+    "_comment": "Regular expressions for the process name (without .exe). proxyRx - programs that listen on a local proxy port (the 'Proxy 127.0.0.1:port' nodes are built from them).",
     "proxyRx": "^(xray|sing-box|verge-mihomo|mihomo|clash-meta|v2ray|hysteria|tuic)",
     "happRx": "^(Happ|happd|xray|sing-box)$",
     "clashRx": "^(verge-mihomo|mihomo|clash-verge|clash-meta)"
   },
 
   "paths": {
-    "_comment": "Где искать настройки и консольные клиенты. Если файла нет, соответствующий блок карты просто будет пустым.",
+    "_comment": "Where to look for settings and console clients. If a file is missing, the corresponding block of the map is simply empty.",
     "happRouting": "%LOCALAPPDATA%\\Happ\\routing.json",
     "clashVergeSettings": "%APPDATA%\\io.github.clash-verge-rev.clash-verge-rev\\verge.yaml",
     "anyconnectCli": [
@@ -54,7 +54,7 @@
   "skipDnsServersRx": "^100\\.",
 
   "probes": {
-    "_comment": "internetIp - по какому адресу определяется маршрут «в интернет». controlZone - имя для проб резолвера. exitUrl - страница, возвращающая внешний IP (формат Cloudflare trace).",
+    "_comment": "internetIp - the address used to find the 'to the internet' route. controlZone - the name for resolver probes. exitUrl - a page that returns the external IP (Cloudflare trace format).",
     "internetIp": "1.1.1.1",
     "controlZone": "example.com",
     "exitUrl": "https://www.cloudflare.com/cdn-cgi/trace"

@@ -2,15 +2,36 @@
 
 **English** · [Русский](README.ru.md)
 
-A local, read-only web page that shows **which program talks through which network interface (VPN, TUN and proxy tunnels included) and where its traffic goes** — and helps you work out why several VPNs on one machine get in each other's way.
+**▶ [Try the live demo in your browser](https://andrewmoryakov.github.io/netmap/)** — no install, made-up data, a ready-made incident to rewind.
+
+A local, read-only web page that shows **which program talks through which network interface (VPN, TUN and proxy tunnels included) and where its traffic goes** — and helps you work out why several VPNs on one machine get in each other's way. Its party trick is a **time machine**: drag a slider and the whole map rewinds to the moment a flaky VPN dropped, so you can *see* an incident that never reproduces while you watch.
 
 ![netmap screenshot](docs/screenshot.png)
-
-*The screenshot uses made-up demo data. The interface language is currently Russian only.*
 
 ```
 processes  →  interfaces (metric, DNS, throughput)  →  where the traffic goes
 ```
+
+*The screenshots use made-up demo data.*
+
+## Time machine
+
+Every snapshot the page receives is kept. The timeline at the bottom scrubs the entire UI — map, side panel, every tab — back to any moment. Warning and error events are marked on the timeline, `⚠◀` / `▶⚠` jump between incidents, arrow keys step, Space plays, End returns to live.
+
+![rewinding an incident](docs/rewind.gif)
+
+![time machine screenshot](docs/time-machine.png)
+
+In the demo above Cisco AnyConnect starts reconnecting, the adapter with metric 1 stays first in the DNS list and goes silent, names stop resolving, and NetBird loses its management server because its own domain falls under an NRPT rule — all visible, frame by frame, on one map.
+
+## Share without leaking
+
+The **Share** button creates, entirely in the page (nothing is uploaded):
+
+- a **PNG of the map** exactly as you see it, or
+- the **whole recording as one HTML file** that opens in any browser with no install and no server, with the time slider intact — a replay you can attach to a bug report or publish in an article.
+
+By default everything is **anonymised**: IP addresses, domain names, computer / peer / adapter names and unusual process names are replaced by consistent aliases (the same real value always gets the same alias; hosts of one /24 stay in one /24; private ranges stay private). The dialog shows exactly what was replaced, visible only to you. Review the result before publishing: free-form texts may contain something the program did not recognise.
 
 ## Features
 
@@ -24,6 +45,7 @@ processes  →  interfaces (metric, DNS, throughput)  →  where the traffic goe
 - **"Plan…"**: builds a *plan* for sending an address, a subnet or a program through a different interface (drag a node onto an interface). It produces apply and rollback scripts but **never applies anything itself**.
 - **"Links"**: a registry of your own routing intentions (`netmap.links.json`) with statuses (planned / active / marked manually / drifted) and a classification of routes (default at start / appeared after start / mine).
 - **All processes**: by default the map shows the 14 busiest processes and folds the rest into one node; the "all processes" checkbox (or the button in the folded node's side panel) shows every one of them.
+- **English and Russian**: the language follows the browser; the `RU` / `EN` button switches it, `?lang=en` forces it. Server messages follow the page (`-Lang ru|en` sets the default for the console).
 
 ## Safety model
 
@@ -31,12 +53,13 @@ processes  →  interfaces (metric, DNS, throughput)  →  where the traffic goe
 - It listens on **`127.0.0.1` only** (port 47900, or the next free one up to 47909) and sends nothing out. The only exceptions are the on-demand checks (a request to `cloudflare.com` for the external IP, and DNS probes), which run only when you press the button.
 - The local API checks the `Host` header, requires an `X-NetMap` header (a plain cross-site request is rejected), and accepts writes only as `POST` with `Content-Type: application/json`.
 - Addresses and subnets you type are validated; subnets wider than `/8` are rejected.
+- The recorded history lives only in the open page (a reload starts a new one) until you export it.
 
 ## Requirements
 
 - Windows 10 / 11.
 - **PowerShell 7** (`pwsh`). If started from Windows PowerShell 5.1, the script relaunches itself in `pwsh` when it is installed.
-- A web browser.
+- A modern web browser.
 - No administrator rights are needed for the map. They are needed only to run the route scripts that "Plan…" produces.
 
 ## Run
@@ -48,12 +71,14 @@ netmap.cmd
 or
 
 ```
-pwsh -NoProfile -ExecutionPolicy Bypass -File netmap.ps1 [-Port 47900] [-NoBrowser]
+pwsh -NoProfile -ExecutionPolicy Bypass -File netmap.ps1 [-Port 47900] [-NoBrowser] [-Lang en]
 ```
 
 Then open `http://127.0.0.1:47900/` (it opens automatically unless `-NoBrowser` is given). Close the console window or press Ctrl+C to stop.
 
 The first data collection takes up to 20 seconds; after that the page refreshes every 5 seconds (untick "auto" to stop).
+
+**No Windows at hand?** Open `index.html` straight from disk (or the [live demo](https://andrewmoryakov.github.io/netmap/)): without a server the page switches to demo mode with a synthetic network. `?demo=1` forces it, `?demo=0` disables it.
 
 ## Configuration
 
@@ -72,7 +97,7 @@ The config is validated at startup; a broken JSON file, an invalid regular expre
 |---|---|
 | `netmap.ps1` | server (HTTP on loopback), data collection, plans and the links registry |
 | `netmap-monitor.ps1` | background monitor (DNS, ping, events) |
-| `index.html` | the whole UI (map, tabs, "Plan…", "Links") |
+| `index.html` | the whole UI: map, tabs, "Plan…", "Links", time machine, share, demo |
 | `netmap.config.json` | settings |
 | `netmap.cmd` | double-click launcher |
 
@@ -80,12 +105,12 @@ Created at runtime next to the scripts and ignored by git: `netmap.log`, `events
 
 ## Limitations
 
-- Windows + PowerShell 7 only; little tested on other machines and setups.
+- Windows + PowerShell 7 only for live data (the demo and replays run anywhere); little tested on other machines and setups.
 - For programs outside the config (no dedicated collector) the map shows the adapter, its routes and a destination node, but no data from the program itself.
 - Throughput is measured per adapter, not per process (Windows does not expose that without ETW).
 - A connection is assigned to an interface by the socket's local address; UDP/QUIC chains are less visible than TCP.
 - Applying routes from the UI with an automatic rollback is not implemented yet — you copy the scripts.
-- The UI text is in Russian; there is no localisation yet.
+- The time machine keeps up to about 80 minutes of 5-second snapshots in memory.
 
 ## License
 

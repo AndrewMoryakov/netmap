@@ -1,14 +1,15 @@
 ﻿param($Shared, [string]$Role, [string]$Zone, [string]$Key, [string]$EventsFile)
 <#
-netmap-monitor.ps1 - фоновые пробы для netmap.ps1 (запускается в отдельном потоке, сам по себе не запускать).
-Роли:
-  dns     раз в ~1,5 с спрашивает у системного резолвера СЛУЧАЙНОЕ имя в зоне $Zone (nmXXXXXX.<зона>).
-          Случайное имя не лежит в кэше DNS-клиента, поэтому видна реальная задержка и реальные таймауты.
-          Ответ NXDOMAIN считается успехом (резолвер ответил), таймаут или SERVFAIL - сбоем.
-          Для зоны NetBird запрос идёт через NRPT-правило, то есть через DNS самого NetBird.
-  ping    раз в 2 с пингует шлюз физического адаптера, раз в 6 с читает уровень сигнала Wi-Fi.
-  events  раз в 6 с снимает состояние (адаптеры, маршрут в интернет, AnyConnect, NetBird) и пишет изменения в журнал.
-Только чтение; ничего в системе не меняет.
+netmap-monitor.ps1 - background probes for netmap.ps1 (runs in a separate runspace; do not start it by hand).
+Roles:
+  dns     every ~1.5 s asks the system resolver for a RANDOM name in the zone $Zone (nmXXXXXX.<zone>).
+          A random name is never in the DNS client cache, so the real latency and real timeouts are visible.
+          An NXDOMAIN answer counts as success (the resolver answered); a timeout or SERVFAIL counts as a failure.
+          For the NetBird zone the query goes through the NRPT rule, i.e. through NetBird's own DNS.
+  ping    pings the physical adapter's gateway every 2 s and reads the Wi-Fi signal level every 6 s.
+  events  every 6 s takes a snapshot (adapters, internet route, AnyConnect, NetBird) and writes changes to the journal.
+          Each event is stored in both languages: text (Russian) and en (English); the page picks one.
+Read-only; changes nothing on the system.
 #>
 $ErrorActionPreference = 'SilentlyContinue'
 $rnd = [Random]::new()
@@ -22,8 +23,8 @@ function Push([string]$K, $Sample) {
     if ($l.Count -gt 800) { $l.RemoveRange(0, $l.Count - 600) }
 }
 
-function Add-Ev([string]$Level, [string]$Text) {
-    $e = [pscustomobject]@{ t = (NowMs); level = $Level; text = $Text }
+function Add-Ev([string]$Level, [string]$Text, [string]$En) {
+    $e = [pscustomobject]@{ t = (NowMs); level = $Level; text = $Text; en = $En }
     [void]$Shared.events.Add($e)
     if ($Shared.events.Count -gt 800) { $Shared.events.RemoveRange(0, $Shared.events.Count - 600) }
     try { Add-Content -LiteralPath $EventsFile -Value (ConvertTo-Json -InputObject $e -Compress) -Encoding UTF8 } catch { }
@@ -114,7 +115,7 @@ if ($Role -eq 'events') {
             $o = Invoke-Native $cli.FullName @('-s') 'state' 5000
             $ms = [regex]::Matches($o.Out, 'state:\s*(\S+)')
             if ($ms.Count) { $s.ac = $ms[$ms.Count - 1].Groups[1].Value }
-        } elseif ($cli) { $s.ac = 'служба остановлена' }
+        } elseif ($cli) { $s.ac = 'service-stopped' }   # neutral marker; shown as «служба остановлена» / «service stopped» in the events
         if ($nbExe) {
             $o = Invoke-Native $nbExe @('status', '--json') $null 8000
             $j = $null; try { $j = $o.Out | ConvertFrom-Json } catch { }
@@ -131,28 +132,29 @@ if ($Role -eq 'events') {
     }
 
     $prev = $null
-    Add-Ev 'info' 'Монитор запущен'
+    function AcText([string]$v, [bool]$En) { if (-not $v) { '—' } elseif ($v -eq 'service-stopped') { if ($En) { 'service stopped' } else { 'служба остановлена' } } else { $v } }
+    Add-Ev 'info' 'Монитор запущен' 'Monitor started'
     while (-not $Shared.stop) {
         $t0 = Get-Date
         $cur = Get-Snap
         if ($prev) {
             foreach ($k in $cur.ad.Keys) {
-                if (-not $prev.ad.ContainsKey($k)) { Add-Ev 'info' "Адаптер «$k» появился ($($cur.ad[$k]))" }
-                elseif ($prev.ad[$k] -ne $cur.ad[$k]) { Add-Ev $(if ($cur.ad[$k] -eq 'Up') { 'ok' } else { 'warn' }) "Адаптер «$k»: $($prev.ad[$k]) → $($cur.ad[$k])" }
+                if (-not $prev.ad.ContainsKey($k)) { Add-Ev 'info' "Адаптер «$k» появился ($($cur.ad[$k]))" "Adapter «$k» appeared ($($cur.ad[$k]))" }
+                elseif ($prev.ad[$k] -ne $cur.ad[$k]) { Add-Ev $(if ($cur.ad[$k] -eq 'Up') { 'ok' } else { 'warn' }) "Адаптер «$k»: $($prev.ad[$k]) → $($cur.ad[$k])" "Adapter «$k»: $($prev.ad[$k]) → $($cur.ad[$k])" }
             }
-            foreach ($k in $prev.ad.Keys) { if (-not $cur.ad.ContainsKey($k)) { Add-Ev 'warn' "Адаптер «$k» исчез" } }
-            if ($prev.egress -ne $cur.egress -and $cur.egress) { Add-Ev 'warn' "Маршрут в интернет: «$($prev.egress)» → «$($cur.egress)»" }
-            if ($prev.ac -ne $cur.ac -and ($prev.ac -or $cur.ac)) { Add-Ev $(if ($cur.ac -eq 'Connected') { 'ok' } else { 'warn' }) "AnyConnect: $(if ($prev.ac) { $prev.ac } else { '—' }) → $(if ($cur.ac) { $cur.ac } else { '—' })" }
+            foreach ($k in $prev.ad.Keys) { if (-not $cur.ad.ContainsKey($k)) { Add-Ev 'warn' "Адаптер «$k» исчез" "Adapter «$k» disappeared" } }
+            if ($prev.egress -ne $cur.egress -and $cur.egress) { Add-Ev 'warn' "Маршрут в интернет: «$($prev.egress)» → «$($cur.egress)»" "Internet route: «$($prev.egress)» → «$($cur.egress)»" }
+            if ($prev.ac -ne $cur.ac -and ($prev.ac -or $cur.ac)) { Add-Ev $(if ($cur.ac -eq 'Connected') { 'ok' } else { 'warn' }) "AnyConnect: $(AcText $prev.ac $false) → $(AcText $cur.ac $false)" "AnyConnect: $(AcText $prev.ac $true) → $(AcText $cur.ac $true)" }
             if ($prev.nb -and $cur.nb) {
-                if ($prev.nb.daemon -ne $cur.nb.daemon) { Add-Ev $(if ($cur.nb.daemon -eq 'Connected') { 'ok' } else { 'bad' }) "NetBird: $($prev.nb.daemon) → $($cur.nb.daemon)" }
-                if ($prev.nb.mgmt -ne $cur.nb.mgmt) { Add-Ev $(if ($cur.nb.mgmt) { 'ok' } else { 'bad' }) "NetBird Management: $(if ($cur.nb.mgmt) { 'подключён' } else { 'отключён' })" }
-                if ($prev.nb.signal -ne $cur.nb.signal) { Add-Ev $(if ($cur.nb.signal) { 'ok' } else { 'bad' }) "NetBird Signal: $(if ($cur.nb.signal) { 'подключён' } else { 'отключён' })" }
-                if ($prev.nb.relays -ne $cur.nb.relays) { Add-Ev 'warn' "NetBird relay/STUN доступно: $($prev.nb.relays) → $($cur.nb.relays) из $($cur.nb.relaysTotal)" }
+                if ($prev.nb.daemon -ne $cur.nb.daemon) { Add-Ev $(if ($cur.nb.daemon -eq 'Connected') { 'ok' } else { 'bad' }) "NetBird: $($prev.nb.daemon) → $($cur.nb.daemon)" "NetBird: $($prev.nb.daemon) → $($cur.nb.daemon)" }
+                if ($prev.nb.mgmt -ne $cur.nb.mgmt) { Add-Ev $(if ($cur.nb.mgmt) { 'ok' } else { 'bad' }) "NetBird Management: $(if ($cur.nb.mgmt) { 'подключён' } else { 'отключён' })" "NetBird Management: $(if ($cur.nb.mgmt) { 'connected' } else { 'disconnected' })" }
+                if ($prev.nb.signal -ne $cur.nb.signal) { Add-Ev $(if ($cur.nb.signal) { 'ok' } else { 'bad' }) "NetBird Signal: $(if ($cur.nb.signal) { 'подключён' } else { 'отключён' })" "NetBird Signal: $(if ($cur.nb.signal) { 'connected' } else { 'disconnected' })" }
+                if ($prev.nb.relays -ne $cur.nb.relays) { Add-Ev 'warn' "NetBird relay/STUN доступно: $($prev.nb.relays) → $($cur.nb.relays) из $($cur.nb.relaysTotal)" "NetBird relay/STUN available: $($prev.nb.relays) → $($cur.nb.relays) of $($cur.nb.relaysTotal)" }
                 foreach ($k in $cur.nb.peers.Keys) {
                     $o = $prev.nb.peers[$k]; $n = $cur.nb.peers[$k]
-                    if ($o -and $o -ne $n) { Add-Ev $(if ($n -like 'Connected*') { 'ok' } else { 'info' }) "NetBird пир ${k}: $o → $n" }
+                    if ($o -and $o -ne $n) { Add-Ev $(if ($n -like 'Connected*') { 'ok' } else { 'info' }) "NetBird пир ${k}: $o → $n" "NetBird peer ${k}: $o → $n" }
                 }
-            } elseif ($prev.nb -and -not $cur.nb) { Add-Ev 'warn' 'NetBird: статус не получен' }
+            } elseif ($prev.nb -and -not $cur.nb) { Add-Ev 'warn' 'NetBird: статус не получен' 'NetBird: status not received' }
         }
         $prev = $cur
         Sleep-Until $t0 6000
