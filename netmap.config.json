@@ -1,0 +1,62 @@
+{
+  "_readme": [
+    "Настройки «Карты сети». Здесь описано, какие программы и адаптеры карта узнаёт. Править можно без изменения кода; после правки перезапустите карту.",
+    "adapterKinds - список видов сетевых адаптеров. Проверяется сверху вниз, побеждает первое совпадение (поэтому NetBird стоит выше общего WireGuard). Адаптер, не подошедший ни под один вид, считается physical (если это настоящее железо) или other.",
+    "  kind  - внутреннее имя. happ, clash, anyconnect, tailscale, netbird - зарезервированы: у них есть собственные сборщики данных (процессы, файлы настроек, консольные клиенты). Любое другое имя - универсальный вид: карта покажет адаптер, его маршруты и узел назначения, но без данных программы.",
+    "  label - подпись на карте и в легенде. color - цвет.",
+    "  nameRx / descRx - регулярные выражения (без учёта регистра) для имени адаптера и его описания в Windows. Достаточно одного из двух.",
+    "  tun   - true, если программа перехватывает весь трафик (TUN-VPN). Влияет на замечания «два TUN одновременно» и «DNS перехвачен».",
+    "  vpn   - true, чтобы адаптер показывался, даже когда он отключён.",
+    "Пути могут содержать переменные окружения вида %APPDATA%."
+  ],
+
+  "adapterKinds": [
+    { "kind": "happ",       "label": "Happ TUN",       "color": "#ff8f3a", "tun": true,  "vpn": true, "nameRx": "happ", "descRx": "sing-tun" },
+    { "kind": "clash",      "label": "Clash TUN",      "color": "#b57bff", "tun": true,  "vpn": true, "nameRx": "^Meta$|mihomo|clash", "descRx": "Meta Tunnel|Mihomo|Clash" },
+    { "kind": "anyconnect", "label": "AnyConnect",     "color": "#ff5d7a", "vpn": true, "descRx": "AnyConnect|Secure Client" },
+    { "kind": "tailscale",  "label": "Tailscale",      "color": "#3ec9c0", "vpn": true, "nameRx": "tailscale", "descRx": "Tailscale" },
+    { "kind": "netbird",    "label": "NetBird",        "color": "#4cd37b", "vpn": true, "nameRx": "^wt\\d+$", "descRx": "NetBird" },
+
+    { "kind": "warp",         "label": "Cloudflare WARP", "color": "#f6821f", "tun": true, "vpn": true, "descRx": "Cloudflare WARP|WARP" },
+    { "kind": "globalprotect","label": "GlobalProtect",   "color": "#e0605a", "vpn": true, "descRx": "PANGP|GlobalProtect" },
+    { "kind": "fortinet",     "label": "FortiClient",     "color": "#d94f4f", "vpn": true, "descRx": "Fortinet|FortiClient" },
+    { "kind": "zerotier",     "label": "ZeroTier",        "color": "#c9a227", "vpn": true, "descRx": "ZeroTier" },
+    { "kind": "openvpn",      "label": "OpenVPN",         "color": "#e8833a", "vpn": true, "descRx": "OpenVPN|TAP-Windows|Wintun|OpenVPN Data Channel Offload" },
+    { "kind": "wireguard",    "label": "WireGuard",       "color": "#8f6bd9", "vpn": true, "descRx": "WireGuard" },
+
+    { "kind": "wsl",    "label": "WSL",     "color": "#8b93a1", "nameRx": "WSL" },
+    { "kind": "hyperv", "label": "Hyper-V", "color": "#8b93a1", "descRx": "Hyper-V" }
+  ],
+
+  "processes": {
+    "_comment": "Регулярные выражения по имени процесса (без .exe). proxyRx - программы, слушающие локальный порт прокси (по ним строятся узлы «Прокси 127.0.0.1:порт»).",
+    "proxyRx": "^(xray|sing-box|verge-mihomo|mihomo|clash-meta|v2ray|hysteria|tuic)",
+    "happRx": "^(Happ|happd|xray|sing-box)$",
+    "clashRx": "^(verge-mihomo|mihomo|clash-verge|clash-meta)"
+  },
+
+  "paths": {
+    "_comment": "Где искать настройки и консольные клиенты. Если файла нет, соответствующий блок карты просто будет пустым.",
+    "happRouting": "%LOCALAPPDATA%\\Happ\\routing.json",
+    "clashVergeSettings": "%APPDATA%\\io.github.clash-verge-rev.clash-verge-rev\\verge.yaml",
+    "anyconnectCli": [
+      "C:\\Program Files*\\Cisco\\Cisco AnyConnect Secure Mobility Client\\vpncli.exe",
+      "C:\\Program Files*\\Cisco\\Cisco Secure Client\\vpncli.exe"
+    ],
+    "anyconnectService": "vpnagent",
+    "tailscaleCli": [ "C:\\Program Files\\Tailscale\\tailscale.exe" ]
+  },
+
+  "localProxyPorts": [ 10808, 10809 ],
+
+  "hotspotGatewayRx": "^(192\\.168\\.43\\.1|172\\.20\\.10\\.1|192\\.168\\.137\\.1)$",
+
+  "skipDnsServersRx": "^100\\.",
+
+  "probes": {
+    "_comment": "internetIp - по какому адресу определяется маршрут «в интернет». controlZone - имя для проб резолвера. exitUrl - страница, возвращающая внешний IP (формат Cloudflare trace).",
+    "internetIp": "1.1.1.1",
+    "controlZone": "example.com",
+    "exitUrl": "https://www.cloudflare.com/cdn-cgi/trace"
+  }
+}

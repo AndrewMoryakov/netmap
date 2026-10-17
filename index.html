@@ -1,0 +1,1093 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Карта сети</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #0f1218; --panel: #171c25; --panel2: #1d2330; --line: #2a3242; --text: #e6e9ef; --muted: #8b95a7;
+  --ok: #4cd37b; --warn: #f5a623; --bad: #ff5d5d; --info: #5aa9ff;
+  --physical: #4f9cff; --happ: #ff8f3a; --clash: #b57bff; --anyconnect: #ff5d7a; --tailscale: #3ec9c0; --netbird: #4cd37b; --proxy: #e8d44d; --other: #8b93a1;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.muted { color: var(--muted); }
+.spacer { flex: 1; }
+button, input[type=text] { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; }
+button { cursor: pointer; } button:hover { border-color: #46526b; } button:disabled { opacity: .5; cursor: default; }
+input[type=text] { width: 190px; }
+label { color: var(--muted); user-select: none; }
+#live { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+#live.ok { background: var(--ok); } #live.err { background: var(--bad); }
+#problems { display: flex; flex-direction: column; gap: 4px; padding: 8px 16px 0; }
+.prob { display: flex; gap: 8px; padding: 6px 10px; border-radius: 6px; background: var(--panel); border-left: 4px solid var(--info); cursor: default; }
+.prob.warn { border-left-color: var(--warn); } .prob.bad { border-left-color: var(--bad); background: #231820; }
+.prob b { font-weight: 600; } .prob .d { color: var(--muted); }
+.prob.collapsed .d { display: none; }
+#probToggle { margin: 6px 16px 0; font-size: 12px; color: var(--muted); cursor: pointer; background: none; border: none; padding: 0; text-align: left; }
+nav { display: flex; gap: 2px; padding: 10px 16px 0; border-bottom: 1px solid var(--line); margin-top: 8px; }
+nav button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 6px 14px; }
+nav button.on { color: var(--text); border-bottom-color: var(--info); }
+main { padding: 12px 16px 40px; }
+.hidden { display: none !important; }
+#tab-map { display: flex; gap: 14px; align-items: flex-start; }
+#mapwrap { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px; overflow: auto; }
+#map { width: 100%; height: auto; display: block; }
+#side { width: 380px; flex: none; display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 150px); overflow: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card h3 { margin: 0 0 6px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; }
+.kv div:nth-child(odd) { color: var(--muted); } .kv div { overflow-wrap: anywhere; }
+table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+th, td { text-align: left; padding: 5px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+h2 { font-size: 14px; margin: 18px 0 6px; } h2:first-child { margin-top: 0; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 10px; margin: 1px 3px 1px 0; font-size: 12px; border: 1px solid; }
+.ok-t { color: var(--ok); } .warn-t { color: var(--warn); } .bad-t { color: var(--bad); }
+code, .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.node { cursor: pointer; } .node rect.bg { transition: opacity .12s; }
+.dimmed { opacity: .18; }
+.edge { fill: none; stroke-linecap: round; transition: opacity .12s; }
+.edge.dash { stroke-dasharray: 6 5; }
+/* живой трафик: бегущие штрихи поверх линии «интерфейс → назначение» */
+.flow { fill: none; stroke: #fff; stroke-opacity: .65; stroke-width: 2; stroke-dasharray: 3 13; stroke-linecap: round; pointer-events: none; animation: nmflow 1.2s linear infinite; transition: opacity .12s; }
+@keyframes nmflow { to { stroke-dashoffset: -16; } }
+/* подсветка изменений: узел мигает свечением, линия - яркостью */
+.node.flash { animation: nmglow 1.6s ease-in-out 5; }
+@keyframes nmglow { 0%, 100% { filter: none; } 50% { filter: drop-shadow(0 0 7px #ffd23f) drop-shadow(0 0 2px #ffd23f); } }
+.edge.flash { animation: nmedge 1.6s ease-in-out 5; }
+@keyframes nmedge { 0%, 100% { stroke-opacity: .55; } 50% { stroke-opacity: 1; filter: drop-shadow(0 0 4px #ffd23f); } }
+.sdot.pulse { animation: nmpulse 1.2s ease-in-out infinite; }
+@keyframes nmpulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .flow, .node.flash, .edge.flash, .sdot.pulse { animation: none; } }
+text { fill: var(--text); } text.sub { fill: var(--muted); font-size: 11px; } text.t { font-size: 12.5px; font-weight: 600; }
+text.col { fill: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.sel rect.bg { stroke-width: 2.5; }
+#legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 8px 0; color: var(--muted); font-size: 12px; }
+#legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.vd { display: flex; gap: 8px; padding: 8px 12px; border-radius: 6px; background: var(--panel); border-left: 4px solid var(--info); margin-bottom: 6px; }
+.vd.bad { border-left-color: var(--bad); background: #231820; } .vd.warn { border-left-color: var(--warn); } .vd.ok { border-left-color: var(--ok); }
+.mc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 4px; margin-bottom: 10px; }
+.mc h3 { margin: 0 0 2px; font-size: 13px; } .mc .st { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.seg button { border-radius: 0; margin: 0; } .seg button:first-child { border-radius: 6px 0 0 6px; } .seg button:last-child { border-radius: 0 6px 6px 0; } .seg button.on { background: #2b3a55; border-color: #46628f; }
+.ev { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.ev .src { color: var(--muted); font-size: 11px; }
+.ev.warn .m { color: var(--warn); } .ev.bad .m { color: var(--bad); } .ev.ok .m { color: var(--ok); }
+#map { user-select: none; -webkit-user-select: none; }
+.node.draggable { cursor: grab; touch-action: none; } .node.draggable:active { cursor: grabbing; }
+.node.droptarget rect.bg { stroke-dasharray: 5 3; } .node.dropover rect.bg { stroke-width: 3.5; fill: #243149; } .node.dragsrc { opacity: .55; }
+#dragghost { stroke: #f5a623; stroke-width: 3; stroke-dasharray: 7 5; pointer-events: none; }
+#planOverlay { position: fixed; inset: 0; background: #000a; z-index: 50; display: flex; justify-content: flex-end; }
+#planPane { width: min(680px, 100%); height: 100%; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 14px 18px 40px; box-sizing: border-box; }
+#planPane h2 { margin-top: 16px; }
+.banner-ro { background: #1b2a20; border: 1px solid #2f5a37; color: #9fe0ae; padding: 7px 10px; border-radius: 6px; margin: 8px 0 10px; }
+#planForm { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 8px; }
+#planForm input[type=text] { flex: 1; min-width: 200px; } #planForm select { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 100%; }
+.opt { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+pre.cmd { background: #0f141c; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 8px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.pw { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; } .pw .dot { margin-top: 5px; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #2b3a55; border: 1px solid #46628f; padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Карта сети</h1>
+  <span class="muted" id="host"></span>
+  <span class="muted" id="stamp"></span><span id="live" title="связь с локальным сервером"></span>
+  <div class="spacer"></div>
+  <button id="btnRefresh">Обновить</button>
+  <label><input type="checkbox" id="auto" checked> авто, 5 с</label>
+  <label title="Показать на карте каждый процесс, а не только 14 самых активных"><input type="checkbox" id="allProcs"> все процессы</label>
+  <button id="btnDns" title="Опросить каждый DNS-сервер из таблицы адаптеров">Проверить DNS</button>
+  <button id="btnExit" title="Узнать внешний IP напрямую и через локальные прокси (запрос к cloudflare.com)">Внешний IP</button>
+  <button id="btnPlan" title="Составить план: как направить адрес или программу через другой интерфейс. Ничего не применяется">План…</button>
+  <form id="traceForm" class="row" style="margin:0"><input type="text" id="traceInput" placeholder="домен или IPv4" spellcheck="false"><button>Путь</button></form>
+</header>
+<div id="problems"></div>
+<nav id="tabs">
+  <button data-tab="map" class="on">Карта</button>
+  <button data-tab="mon">Монитор</button>
+  <button data-tab="procs">Процессы</button>
+  <button data-tab="net">Маршруты и DNS</button>
+  <button data-tab="checks">Проверки</button>
+  <button data-tab="links">Связи</button>
+  <button data-tab="log">Журнал</button>
+</nav>
+<main>
+  <div id="tab-map" class="tab">
+    <div id="mapwrap"><div id="legend"></div><svg id="map" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <aside id="side"></aside>
+  </div>
+  <div id="tab-mon" class="tab hidden"></div>
+  <div id="tab-procs" class="tab hidden"></div>
+  <div id="tab-net" class="tab hidden"></div>
+  <div id="tab-checks" class="tab hidden"></div>
+  <div id="tab-links" class="tab hidden"></div>
+  <div id="tab-log" class="tab hidden"></div>
+</main>
+
+<div id="planOverlay" class="hidden"><div id="planPane" role="dialog" aria-label="План переопределения связи">
+  <div style="display:flex;align-items:center;justify-content:space-between"><h2 style="margin:0" id="planTitle">План переопределения связи</h2><button id="planClose">Закрыть</button></div>
+  <div class="banner-ro">Это только план. Карта ничего не меняет в системе: команды выполняете вы сами, сначала пробный вариант с откатом.</div>
+  <form id="planForm"><input type="text" id="planTarget" placeholder="адрес, подсеть (203.0.113.0/24) или домен" spellcheck="false"><button type="button" id="planReset" class="hidden" title="Вместо процесса указать адрес вручную">сбросить</button><label for="planVia">через</label><select id="planVia"></select><button>Составить план</button></form>
+  <div id="planOut"></div>
+</div></div>
+<script>
+'use strict';
+if (location.protocol === 'file:') {
+  document.body.innerHTML = '<div style="max-width:720px;margin:12vh auto;padding:24px;background:#171c25;border:1px solid #2a3242;border-radius:10px;font-size:15px;line-height:1.6"><h2 style="margin-top:0">Эту страницу нельзя открывать как файл</h2><p>Данные ей отдаёт локальный сервер, поэтому сама по себе она пустая. Запустите <b>«Карта сети.cmd»</b> с рабочего стола: страница откроется сама по адресу <b>http://127.0.0.1:47900/</b>.</p></div>';
+  throw new Error('opened from file://');
+}
+const $ = (q, r = document) => r.querySelector(q);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const api = async path => {
+  const r = await fetch(path, { headers: { 'X-NetMap': '1' }, cache: 'no-store' });
+  if (!r.ok) throw new Error(path + ' → HTTP ' + r.status);
+  return r.json();
+};
+// Виды адаптеров, цвета и подписи приходят от сервера (netmap.config.json); здесь только встроенные виды самой карты.
+const BUILTIN_KIND = {
+  physical: ['#4f9cff', 'физический'], mine: ['#ffd23f', 'моя связь'], proxy: ['#e8d44d', 'локальный прокси'], other: ['#8b93a1', 'прочее'], dst: ['#c7cfdd', 'назначение'], proc: ['#6b7790', 'процесс'],
+};
+let KIND = { ...BUILTIN_KIND }, KIND_ORDER = ['physical'], TUN_KINDS = new Set(), LOCAL_PROXY_PORTS = [];
+const DEDICATED_DST = new Set(['physical', 'happ', 'clash', 'anyconnect', 'netbird', 'tailscale', 'hyperv', 'wsl', 'other']);   // у этих видов свой узел назначения, у остальных - универсальный
+function applyConfig(s) {
+  KIND = { ...BUILTIN_KIND }; KIND_ORDER = ['physical']; TUN_KINDS = new Set();
+  (s.kinds || []).forEach(k => { KIND[k.kind] = [k.color || '#8b93a1', k.label || k.kind]; KIND_ORDER.push(k.kind); if (k.tun) TUN_KINDS.add(k.kind); });
+  KIND_ORDER.push('other'); LOCAL_PROXY_PORTS = s.localProxyPorts || [];
+}
+const kc = k => (KIND[k] || KIND.other)[0];
+const kl = k => (KIND[k] || KIND.other)[1];
+const isTun = k => TUN_KINDS.has(k);
+
+let state = null, prev = null, selected = null, events = [], checks = { dns: null, exit: null, trace: null }, busy = false, timer = null, tab = 'map';
+
+/* ------------------------------------------------------------ скорость, изменения, режим «все процессы» */
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
+let expandProcs = lsGet('nm.allProcs') === '1';
+const rates = new Map();   // имя адаптера -> { rx, tx (байт/с, null пока не измерено), hist: [сумма за интервал] }
+const fmtRate = b => b >= 1048576 ? (b / 1048576).toFixed(1) + ' МБ/с' : b >= 1024 ? Math.round(b / 1024) + ' КБ/с' : Math.round(b) + ' Б/с';
+function updateRates(a, b) {
+  const dt = a ? (Date.parse(b.ts) - Date.parse(a.ts)) / 1000 : 0;
+  const pa = a ? new Map(a.adapters.map(x => [x.name, x])) : new Map(), seen = new Set();
+  for (const x of b.adapters) {
+    seen.add(x.name);
+    let r = rates.get(x.name); if (!r) { r = { rx: null, tx: null, hist: [] }; rates.set(x.name, r); }
+    const o = pa.get(x.name);
+    if (!o || x.rxBytes == null || o.rxBytes == null) continue;
+    if (x.rxBytes < o.rxBytes || x.txBytes < o.txBytes) { r.rx = r.tx = null; continue; }   // счётчик сброшен (адаптер переподнялся)
+    if (dt < 0.5) continue;
+    r.rx = (x.rxBytes - o.rxBytes) / dt; r.tx = (x.txBytes - o.txBytes) / dt;
+    r.hist.push(r.rx + r.tx); if (r.hist.length > 40) r.hist.shift();
+  }
+  for (const k of [...rates.keys()]) if (!seen.has(k)) rates.delete(k);
+}
+const FLASH_MS = 8000;
+let lastSigs = null, lastProcs = null, lastEdges = null;
+const flashAt = new Map(), flashWhy = new Map();   // id узла / ключ линии -> время изменения, что изменилось
+const STATUS_COLOR = { ok: '#4cd37b', warn: '#f5a623', bad: '#ff5d5d', off: '#6b7790' };
+
+/* ------------------------------------------------------------ журнал событий */
+function logEv(level, text) { events.unshift({ t: new Date(), level, text }); if (events.length > 400) events.pop(); }
+function diffEvents(a, b) {
+  if (!a) { logEv('ok', 'Страница открыта, первый снимок получен'); return; }
+  const ad = new Map(a.adapters.map(x => [x.name, x])), bd = new Map(b.adapters.map(x => [x.name, x]));
+  for (const [n, x] of bd) { const o = ad.get(n); if (!o) logEv('info', `Адаптер «${n}» появился (${x.status})`); else if (o.status !== x.status) logEv(x.status === 'Up' ? 'ok' : 'warn', `Адаптер «${n}»: ${o.status} → ${x.status}`); }
+  for (const n of ad.keys()) if (!bd.has(n)) logEv('warn', `Адаптер «${n}» исчез`);
+  if (a.routes.internet.iface !== b.routes.internet.iface) logEv('warn', `Маршрут в интернет: «${a.routes.internet.iface}» → «${b.routes.internet.iface}»`);
+  const sa = a.services, sb = b.services;
+  if (sa.anyconnect.state !== sb.anyconnect.state) logEv(sb.anyconnect.state === 'Connected' ? 'ok' : 'warn', `AnyConnect: ${sa.anyconnect.state || '—'} → ${sb.anyconnect.state || '—'}`);
+  if (sa.happ.tunUp !== sb.happ.tunUp) logEv('info', `Happ TUN: ${sb.happ.tunUp ? 'поднят' : 'снят'}`);
+  if (sa.happ.running !== sb.happ.running) logEv('info', `Happ: ${sb.happ.running ? 'запущен' : 'остановлен'}`);
+  if (sa.clash.running !== sb.clash.running) logEv('info', `Clash Verge: ${sb.clash.running ? 'запущен' : 'остановлен'}`);
+  if (sa.tailscale.backend !== sb.tailscale.backend) logEv('info', `Tailscale: ${sa.tailscale.backend} → ${sb.tailscale.backend}`);
+  const na = sa.netbird, nb = sb.netbird;
+  if (na.installed && nb.installed) {
+    if (na.daemonStatus !== nb.daemonStatus) logEv(nb.daemonStatus === 'Connected' ? 'ok' : 'bad', `NetBird: ${na.daemonStatus} → ${nb.daemonStatus}`);
+    for (const k of ['management', 'signal']) if (na[k] && nb[k] && na[k].connected !== nb[k].connected) logEv(nb[k].connected ? 'ok' : 'bad', `NetBird ${k}: ${nb[k].connected ? 'подключён' : 'отключён'} ${nb[k].error || ''}`);
+    const ra = na.relays.filter(r => r.available).length, rb = nb.relays.filter(r => r.available).length;
+    if (ra !== rb) logEv('warn', `NetBird relay доступно: ${ra} → ${rb} из ${nb.relays.length}`);
+    const pa = new Map(na.peers.map(p => [p.name, p]));
+    for (const p of nb.peers) { const o = pa.get(p.name); if (o && (o.status !== p.status || o.type !== p.type)) logEv(p.status === 'Connected' ? 'ok' : 'info', `NetBird пир ${p.name}: ${o.status}/${o.type} → ${p.status}/${p.type}`); }
+  }
+  const pk = x => new Set(x.problems.filter(p => p.level !== 'info').map(p => p.title));
+  const pa2 = pk(a), pb2 = pk(b);
+  for (const p of b.problems) if (p.level !== 'info' && !pa2.has(p.title)) logEv(p.level, 'Замечание: ' + p.title);
+  for (const t of pa2) if (!pb2.has(t)) logEv('ok', 'Замечание снято: ' + t);
+}
+
+/* ------------------------------------------------------------ граф */
+function buildGraph(s) {
+  const nodes = [], edges = [], byId = {};
+  const add = n => { nodes.push(n); byId[n.id] = n; return n; };
+  const edge = (from, to, o = {}) => { if (byId[from] && byId[to]) edges.push({ from, to, w: 1, ...o }); };
+  const inetIf = s.routes.internet.iface;
+
+  // порядок DNS: адаптеры по метрике
+  const dnsRank = new Map(); s.dns.servers.forEach(d => { if (!dnsRank.has(d.adapter)) dnsRank.set(d.adapter, dnsRank.size + 1); });
+
+  const order = KIND_ORDER;
+  const ifs = [...s.adapters].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.metric - b.metric);
+  const alertIf = new Set();
+  const ac = s.services.anyconnect;
+  s.adapters.filter(a => a.kind === 'anyconnect' && a.status === 'Up' && ac.state && ac.state !== 'Connected').forEach(a => alertIf.add(a.name));
+  s.dns.check && s.dns.check.filter(r => !r.ok).forEach(r => alertIf.add(r.adapter));
+
+  ifs.forEach(a => {
+    const lines = [];
+    if (a.status !== 'Up') lines.push({ t: 'отключён (' + a.status + ')', c: '#8b95a7' });
+    if (a.ipv4.length) lines.push(a.ipv4[0] + '   метрика ' + a.metric);
+    if (a.dns.length) lines.push({ t: 'DNS: ' + a.dns.join(', '), sub: true });
+    if (a.gateway) lines.push({ t: 'шлюз ' + a.gateway, sub: true });
+    if (a.name === inetIf) lines.push({ t: '★ сюда идёт интернет по умолчанию', c: '#f5a623' });
+    if (dnsRank.has(a.name)) lines.push({ t: 'DNS опрашивается №' + dnsRank.get(a.name), sub: true });
+    let rateLine = -1;
+    if (a.status === 'Up' && a.rxBytes != null) {
+      const rt = rates.get(a.name), has = rt && rt.rx != null, busyNow = has && rt.rx + rt.tx > 1024;
+      rateLine = lines.length;
+      lines.push({ t: has ? '↓ ' + fmtRate(rt.rx) + '   ↑ ' + fmtRate(rt.tx) : '↓ ↑ измеряю…', sub: !busyNow, c: busyNow ? '#9ad1ff' : undefined, vol: true });
+    }
+    const pi = links && links.perIface && links.perIface[a.name];
+    if (pi && (pi.baseline + pi.later + pi.mine)) lines.push({ t: 'маршрутов: ' + pi.baseline + ' по умолч.' + (pi.later ? ' · +' + pi.later + ' после запуска' : '') + (pi.mine ? ' · ' + pi.mine + ' моих' : ''), sub: !pi.later, c: pi.later ? '#f5a623' : undefined });
+    add({ id: 'if:' + a.name, col: 1, kind: a.kind, title: a.name, tag: kl(a.kind), lines, dim: a.status !== 'Up', alert: alertIf.has(a.name), type: 'iface', data: a, rateLine });
+  });
+  s.proxies.forEach(p => add({ id: 'proxy:' + p.port, col: 1, kind: 'proxy', title: 'Прокси 127.0.0.1:' + p.port, tag: p.process, lines: [{ t: 'приложения подключаются сюда напрямую', sub: true }], type: 'proxy', data: p }));
+
+  // процессы
+  const procs = s.connections.processes;
+  const TOPN = 14, top = procs.slice(0, expandProcs ? procs.length : TOPN), rest = expandProcs ? [] : procs.slice(TOPN);
+  const ifIndex = id => nodes.findIndex(n => n.id === id);
+  top.forEach((p, i) => {
+    const main = Object.entries(p.ifaces).sort((a, b) => b[1] - a[1])[0];
+    const sortKey = main ? ifIndex((main[0].startsWith('proxy:') ? '' : 'if:') + main[0]) : 99;
+    if (i >= TOPN) add({ id: 'pr:' + p.name, col: 0, kind: 'proc', compact: true, title: p.name, tag: p.total + ' соед.' + (main ? ' · ' + clip(main[0], 14) : ''), lines: [], type: 'proc', data: p, sortKey });   // компактный узел: в режиме «все процессы» их десятки
+    else add({ id: 'pr:' + p.name, col: 0, kind: 'proc', title: p.name, tag: '', lines: [{ t: p.total + ' соед.' + (main ? ' · чаще через ' + clip(main[0], 22) : ''), sub: true, vol: true }], type: 'proc', data: p, sortKey });
+  });
+  if (rest.length) {
+    const merged = {}; let tot = 0; rest.forEach(p => { tot += p.total; for (const [k, v] of Object.entries(p.ifaces)) merged[k] = (merged[k] || 0) + v; });
+    add({ id: 'pr:*', col: 0, kind: 'proc', title: `ещё ${rest.length} процессов`, tag: '', lines: [{ t: tot + ' соед.', sub: true, vol: true }, { t: 'все — флажок «все процессы» вверху', sub: true }], type: 'proc', data: { name: 'прочие процессы', total: tot, ifaces: merged, remotes: [], list: rest.map(r => r.name), items: rest.map(r => ({ name: r.name, total: r.total, ifaces: r.ifaces })) }, sortKey: 98 });
+  }
+  const myLinks = (links && links.mine) || [];
+  myLinks.forEach(L => {
+    if (L.proc && byId['pr:' + L.proc]) return;   // источник - уже существующий узел процесса
+    const st = linkSt(L);
+    add({ id: 'my:' + L.id, col: 0, kind: 'mine', title: L.label, tag: 'моя связь', lines: [{ t: clip(L.prefixes.join(', '), 40), sub: true }, { t: st[0], c: st[1] }], type: 'mylink', data: { ...L, total: 0, ifaces: {} }, sortKey: -1 });
+  });
+  nodes.filter(n => n.col === 0).sort((a, b) => (a.sortKey - b.sortKey) || (b.data.total - a.data.total)).forEach((n, i) => { n.ord = i; });
+
+  // назначения
+  const physUp = s.adapters.find(a => a.kind === 'physical' && a.status === 'Up' && a.gateway);
+  const exitDirect = checks.exit && checks.exit.find(x => x.label.startsWith('напрямую'));
+  const inetLines = [];
+  if (physUp) inetLines.push({ t: 'через шлюз ' + physUp.gateway + ' («' + clip(physUp.name, 18) + '»)', sub: true });
+  if (exitDirect && exitDirect.ok) inetLines.push({ t: 'внешний IP ' + exitDirect.ip + ' · ' + exitDirect.country, c: '#4cd37b' });
+  add({ id: 'dst:internet', col: 2, kind: 'dst', title: 'Интернет напрямую', tag: 'через оператора', lines: inetLines, type: 'dst', data: { what: 'internet' } });
+
+  const happ = s.services.happ;
+  const physNames = new Set(s.adapters.filter(a => a.kind === 'physical').map(a => a.name));
+  const happProcs = s.connections.processes.filter(p => /^(xray|sing-box|happ|happd)$/i.test(p.name));
+  const privRx = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+  // реальный выход Happ: соединение его процессов, которое ушло прямо через физический адаптер (мимо TUN)
+  const upstream = happProcs.flatMap(p => p.remotes.filter(r => physNames.has(r.iface) && !privRx.test(r.ip)).map(r => ({ ...r, proc: p.name }))).sort((a, b) => b.count - a.count)[0];
+  const happVia = a => happProcs.reduce((n, p) => n + (p.ifaces[a] || 0), 0);
+  if (happ.running || s.adapters.some(a => a.kind === 'happ')) {
+    const l = [];
+    if (upstream) l.push({ t: upstream.proc + ' выходит наружу → ' + (upstream.host || upstream.ip) + ':' + upstream.port, sub: true });
+    else l.push({ t: 'сервер цепочки по TCP-сокетам не виден (возможно UDP/QUIC)', sub: true });
+    const he = checks.exit && checks.exit.find(x => LOCAL_PROXY_PORTS.some(p => x.label.includes(':' + p)) && x.ok);
+    if (he) l.push({ t: 'внешний IP ' + he.ip + ' · ' + he.country, c: '#4cd37b' });
+    if (happ.routing) l.push({ t: 'профиль «' + happ.routing.name + '», globalProxy ' + (happ.routing.globalProxy ? 'да' : 'нет'), sub: true });
+    add({ id: 'dst:happ', col: 2, kind: 'happ', title: 'Прокси-сервер Happ', tag: 'зарубежный выход', lines: l, type: 'dst', data: { what: 'happ', upstream } });
+  }
+  const clashUp = s.adapters.some(a => a.kind === 'clash' && a.status === 'Up') || s.proxies.some(p => /mihomo|clash/i.test(p.process));
+  if (clashUp) add({ id: 'dst:clash', col: 2, kind: 'clash', title: 'Прокси-сервер Clash', tag: 'Clash Verge', lines: [{ t: 'TUN ' + (s.services.clash.tunEnabled ? 'включён' : 'выключен') + ' в настройках', sub: true }], type: 'dst', data: { what: 'clash' } });
+  const acIf = s.adapters.find(a => a.kind === 'anyconnect');
+  if (acIf) add({ id: 'dst:corp', col: 2, kind: 'anyconnect', title: 'Корпоративная сеть', tag: 'AnyConnect', lines: [{ t: 'состояние: ' + (ac.state || '—'), c: ac.state === 'Connected' ? '#4cd37b' : '#f5a623' }, ac.server ? { t: 'шлюз ' + ac.server + (ac.tunnelMode ? ' · ' + ac.tunnelMode : ''), sub: true } : null].filter(Boolean), type: 'dst', data: { what: 'anyconnect' } });
+  const nb = s.services.netbird;
+  if (s.adapters.some(a => a.kind === 'netbird')) {
+    const l = [];
+    if (nb.installed) {
+      l.push({ t: 'Management ' + (nb.management && nb.management.connected ? 'ок' : 'нет') + ' · Signal ' + (nb.signal && nb.signal.connected ? 'ок' : 'нет'), c: nb.management && nb.management.connected ? '#4cd37b' : '#ff5d5d' });
+      l.push({ t: 'пиров ' + nb.peerConnected + '/' + nb.peerTotal + ' · relay ' + nb.relays.filter(r => r.available).length + '/' + nb.relays.length, sub: true });
+    }
+    add({ id: 'dst:netbird', col: 2, kind: 'netbird', title: 'NetBird-сеть', tag: nb.fqdn ? nb.fqdn.split('.').slice(1).join('.') : '', lines: l, type: 'dst', data: { what: 'netbird' } });
+  }
+  const ts = s.services.tailscale;
+  if (s.adapters.some(a => a.kind === 'tailscale')) add({ id: 'dst:tailscale', col: 2, kind: 'tailscale', title: 'Tailscale-сеть', tag: ts.backend || '', lines: [{ t: 'пиров ' + (ts.peers || []).filter(p => p.name).length, sub: true }], type: 'dst', data: { what: 'tailscale' } });
+  [...new Set(s.adapters.filter(a => !DEDICATED_DST.has(a.kind)).map(a => a.kind))].forEach(k => {
+    const ads = s.adapters.filter(a => a.kind === k), upAds = ads.filter(a => a.status === 'Up');
+    add({ id: 'dst:' + k, col: 2, kind: k, title: kl(k) + ' (сеть)', tag: upAds.length ? 'адаптер поднят' : 'адаптер отключён', lines: [{ t: ads.map(a => a.name + (a.ipv4[0] ? ' ' + a.ipv4[0] : '')).join(', '), sub: true }], type: 'dst', data: { what: k } });
+  });
+  if (s.adapters.some(a => a.kind === 'hyperv' || a.kind === 'wsl')) add({ id: 'dst:local', col: 2, kind: 'other', title: 'Локальные виртуальные сети', tag: 'Hyper-V / WSL', lines: [], type: 'dst', data: { what: 'local' } });
+
+  // рёбра процесс → интерфейс
+  nodes.filter(n => n.col === 0).forEach(pn => {
+    for (const [ifn, cnt] of Object.entries(pn.data.ifaces)) {
+      let tid = ifn.startsWith('proxy:') ? ifn : 'if:' + ifn;
+      if (!byId[tid]) {
+        if (!byId['if:?']) add({ id: 'if:?', col: 1, kind: 'other', title: 'не определён', tag: '', lines: [{ t: 'локальный адрес не найден среди адаптеров', sub: true }], type: 'iface', data: { name: 'не определён' }, dim: true });
+        tid = 'if:?';
+      }
+      edge(pn.id, tid, { w: cnt, kind: byId[tid].kind, label: `${pn.data.name} → ${ifn}: ${cnt}` });
+    }
+  });
+  // интерфейс → назначение
+  const cnt = ifn => nodes.filter(n => n.col === 0).reduce((s2, n) => s2 + (n.data.ifaces[ifn] || 0), 0);
+  ifs.forEach(a => {
+    const id = 'if:' + a.name, c = Math.max(cnt(a.name), 1);
+    if (a.kind === 'physical' && a.status === 'Up') {
+      edge(id, 'dst:internet', { w: c, kind: 'physical', label: `${a.name} → интернет` });
+      if (byId['dst:happ'] && happVia(a.name)) edge(id, 'dst:happ', { w: happVia(a.name), kind: 'physical', label: `процессы Happ выходят наружу через ${a.name}` });
+      if (byId['dst:clash']) { const m = s.connections.processes.find(p => /mihomo/i.test(p.name)); if (m && m.ifaces[a.name]) edge(id, 'dst:clash', { w: m.ifaces[a.name], kind: 'physical', label: `mihomo выходит наружу через ${a.name}` }); }
+    }
+    if (a.kind === 'happ') edge(id, 'dst:happ', { w: c, kind: 'happ', label: 'TUN → sing-box → xray → прокси-сервер' });
+    if (a.kind === 'clash') edge(id, 'dst:clash', { w: c, kind: 'clash', label: 'TUN → mihomo → прокси-сервер' });
+    if (a.kind === 'anyconnect') edge(id, 'dst:corp', { w: c, kind: 'anyconnect', label: 'туннель корпоративного VPN' });
+    if (a.kind === 'netbird') edge(id, 'dst:netbird', { w: c, kind: 'netbird', label: 'WireGuard-сеть NetBird' });
+    if (a.kind === 'tailscale') edge(id, 'dst:tailscale', { w: c, kind: 'tailscale', label: 'сеть Tailscale' });
+    if (!DEDICATED_DST.has(a.kind) && byId['dst:' + a.kind]) edge(id, 'dst:' + a.kind, { w: c, kind: a.kind, label: 'туннель: ' + kl(a.kind) });
+    if (a.kind === 'hyperv' || a.kind === 'wsl') edge(id, 'dst:local', { w: c, kind: 'other', label: 'локальная виртуальная сеть' });
+  });
+  myLinks.forEach(L => {
+    const from = (L.proc && byId['pr:' + L.proc]) ? 'pr:' + L.proc : 'my:' + L.id;
+    edge(from, 'if:' + L.via, { w: 6, kind: 'mine', mine: L, label: 'моя связь: ' + L.label + ' → ' + L.via + ' (' + linkSt(L)[0] + ')' });
+  });
+  s.proxies.forEach(p => {
+    const c = nodes.filter(n => n.col === 0).reduce((s2, n) => s2 + (n.data.ifaces['proxy:' + p.port] || 0), 0);
+    if (/xray/i.test(p.process)) edge('proxy:' + p.port, 'dst:happ', { w: Math.max(c, 1), kind: 'proxy', label: `прокси :${p.port} → xray → сервер` });
+    else edge('proxy:' + p.port, 'dst:clash', { w: Math.max(c, 1), kind: 'proxy', label: `прокси :${p.port} → mihomo → сервер` });
+  });
+  // зависимости управляющего канала (пунктир, идёт «назад»): через какой интерфейс достижим сервер
+  s.endpoints.forEach(ep => {
+    const to = 'if:' + ep.via, fromId = ep.id === 'netbird-control' ? 'dst:netbird' : 'dst:corp';
+    const ifn = byId[to];
+    edge(fromId, to, { dashed: true, w: 1, kind: ifn ? ifn.kind : 'other', warn: ifn && isTun(ifn.kind), label: `${ep.label}: достижим через «${ep.via}» (следующий узел ${ep.nextHop || 'on-link'})` });
+  });
+  // состояние каждого узла: цветная точка в заголовке (ok / warn / bad / off) и пояснение для подсказки
+  nodes.forEach(n => {
+    let r = ['ok', 'работает'];
+    if (n.type === 'iface') r = n.alert ? ['bad', 'есть проблема (см. замечания вверху)'] : n.data.status !== 'Up' ? ['off', 'отключён'] : ['ok', 'поднят'];
+    else if (n.type === 'proxy') r = ['ok', 'порт слушается'];
+    else if (n.type === 'proc') r = Object.keys(n.data.ifaces).some(k => !byId[k.startsWith('proxy:') ? k : 'if:' + k]) ? ['warn', 'часть соединений идёт через неопределённый интерфейс'] : ['ok', 'есть соединения'];
+    else if (n.type === 'mylink') { const L = n.data; r = (!L.viaUp && L.status !== 'planned') ? ['bad', 'интерфейс недоступен'] : { active: ['ok', 'действует'], claimed: ['warn', 'отмечена вручную'], drift: ['bad', 'расходится с записью'], planned: ['off', 'не применена'] }[L.status] || ['off', L.status]; }
+    else if (n.id === 'dst:internet') r = !physUp ? ['bad', 'нет физического адаптера со шлюзом'] : exitDirect ? (exitDirect.ok ? ['ok', 'внешний адрес получен'] : ['bad', 'проверка выхода не прошла']) : ['ok', 'шлюз есть, выход не проверялся'];
+    else if (n.id === 'dst:happ') r = happ.running ? ['ok', 'Happ запущен'] : ['warn', 'Happ не запущен'];
+    else if (n.id === 'dst:corp') r = ac.state === 'Connected' ? ['ok', 'AnyConnect подключён'] : /reconnect/i.test(ac.state || '') ? ['bad', 'AnyConnect переподключается'] : ['warn', 'AnyConnect: ' + (ac.state || 'нет данных')];
+    else if (n.id === 'dst:netbird') r = !nb.installed ? ['off', 'NetBird не установлен'] : (nb.management && nb.management.connected && nb.signal && nb.signal.connected) ? ['ok', 'Management и Signal подключены'] : (!(nb.management && nb.management.connected) && !(nb.signal && nb.signal.connected)) ? ['bad', 'Management и Signal не подключены'] : ['warn', 'подключено частично'];
+    else if (n.id === 'dst:tailscale') r = ts.backend === 'Running' ? ['ok', 'Tailscale работает'] : ['warn', 'Tailscale: ' + (ts.backend || 'нет данных')];
+    else if (n.id.startsWith('dst:') && n.data && s.adapters.some(a => a.kind === n.data.what)) r = s.adapters.some(a => a.kind === n.data.what && a.status === 'Up') ? ['ok', 'адаптер поднят'] : ['off', 'адаптер отключён'];
+    n.st = r;
+  });
+  return { nodes, edges, byId };
+}
+
+const nodeH = n => n.compact ? 24 : 34 + n.lines.length * 14 + (n.tag ? 0 : -4);
+
+function layout(g) {
+  const X = [18, 392, 812], W = [262, 290, 300], GAP = 12, TOP = 30;
+  const cols = [[], [], []]; g.nodes.forEach(n => cols[n.col].push(n));
+  cols[0].sort((a, b) => a.ord - b.ord);
+  let H = 0;
+  cols.forEach((c, i) => { let y = TOP; c.forEach(n => { n.x = X[i]; n.w = W[i]; n.h = nodeH(n); n.y = y; y += n.h + GAP; }); H = Math.max(H, y); });
+  // центрируем более короткие колонки относительно самой высокой
+  cols.forEach(c => { if (!c.length) return; const used = c[c.length - 1].y + c[c.length - 1].h - TOP; const off = Math.max(0, (H - TOP - GAP - used) / 2); c.forEach(n => { n.y += off; }); });
+  g.size = { w: X[2] + W[2] + 18, h: H + 10, X, W };
+  // слоты рёбер на сторонах узлов
+  g.nodes.forEach(n => { n.outs = []; n.ins = []; });
+  g.edges.forEach(e => { if (e.dashed) return; g.byId[e.from].outs.push(e); g.byId[e.to].ins.push(e); });
+  const spread = (list, n, key) => {
+    list.sort((a, b) => g.byId[a[key]].y - g.byId[b[key]].y);
+    list.forEach((e, i) => { const k = list.length; e['y_' + (key === 'to' ? 'from' : 'to')] = n.y + 16 + (n.h - 32) * (k === 1 ? .5 : i / (k - 1)); });
+  };
+  g.nodes.forEach(n => { spread(n.outs, n, 'to'); spread(n.ins, n, 'from'); });
+}
+
+function edgePath(e, g) {
+  const a = g.byId[e.from], b = g.byId[e.to];
+  if (e.dashed) {
+    const x1 = a.x, y1 = a.y + a.h - 9, x2 = b.x + b.w, y2 = b.y + b.h - 9;
+    return `M${x1},${y1} C${x1 - 70},${y1 + 26} ${x2 + 70},${y2 + 26} ${x2},${y2}`;
+  }
+  const x1 = a.x + a.w, y1 = e.y_from ?? a.y + a.h / 2, x2 = b.x, y2 = e.y_to ?? b.y + b.h / 2, dx = Math.max(40, (x2 - x1) * .5);
+  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+}
+
+const SVGNS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+
+function related(g, id) {
+  const ids = new Set([id]), eds = new Set();
+  const walk = (start, dir) => { const st = [start]; while (st.length) { const cur = st.pop(); for (const e of g.edges) { if (e.dashed) continue; const nxt = dir === 'down' ? (e.from === cur ? e.to : null) : (e.to === cur ? e.from : null); if (nxt) { eds.add(e); if (!ids.has(nxt)) { ids.add(nxt); st.push(nxt); } } } } };
+  walk(id, 'down'); walk(id, 'up');
+  for (const e of g.edges) if (e.dashed && (ids.has(e.from) || ids.has(e.to))) { eds.add(e); ids.add(e.from); ids.add(e.to); }
+  return { ids, eds };
+}
+
+const edgeKey = e => e.from + '>' + e.to;
+const flashLeft = k => { const t = flashAt.get(k); return t ? Math.max(0, FLASH_MS - (Date.now() - t)) : 0; };
+// что изменилось с прошлой отрисовки: процессы сравниваем по набору интерфейсов (число соединений меняется всегда), остальные узлы - по тексту
+function computeFlash(g) {
+  const sigs = new Map(), procs = new Map(), edges = new Set(), now = Date.now();
+  state.connections.processes.forEach(p => procs.set(p.name, Object.keys(p.ifaces).sort()));
+  g.nodes.forEach(n => { if (n.type !== 'proc') sigs.set(n.id, [n.title, n.tag, 'состояние: ' + n.st[1], n.alert ? 'проблема' : '', n.dim ? 'отключён' : '',...n.lines.filter(l => !l.vol).map(l => typeof l === 'string' ? l : l.t)]); });
+  g.edges.forEach(e => { if (!e.mine && !g.byId[e.from].type.startsWith('proc')) edges.add(edgeKey(e)); });
+  if (lastSigs) {
+    for (const [id, sg] of sigs) {
+      const o = lastSigs.get(id);
+      if (!o) { flashAt.set(id, now); flashWhy.set(id, 'появился'); continue; }
+      const diff = []; for (let i = 0; i < Math.max(o.length, sg.length); i++) if (o[i] !== sg[i] && (o[i] || sg[i])) diff.push((o[i] || '—') + ' → ' + (sg[i] || '—'));
+      if (diff.length) { flashAt.set(id, now); flashWhy.set(id, diff.slice(0, 3).join('; ')); }
+    }
+    g.nodes.forEach(n => {
+      if (n.type !== 'proc' || n.id === 'pr:*') return;
+      const o = lastProcs.get(n.data.name), cur = procs.get(n.data.name);
+      if (!o) { if (!lastProcs.has(n.data.name)) { flashAt.set(n.id, now); flashWhy.set(n.id, 'новый процесс'); } }
+      else if (o.join() !== cur.join()) { flashAt.set(n.id, now); flashWhy.set(n.id, 'интерфейсы: ' + o.join(', ') + ' → ' + cur.join(', ')); }
+    });
+    g.edges.forEach(e => {
+      const k = edgeKey(e), src = g.byId[e.from];
+      if (src.type === 'proc') {
+        if (e.mine || src.id === 'pr:*') return;
+        const o = lastProcs.get(src.data.name), ifn = e.to.replace(/^if:/, '');
+        if (!o || !o.includes(ifn)) { flashAt.set(k, now); flashWhy.set(k, 'новое соединение процесса'); }
+      } else if (!e.mine && !lastEdges.has(k)) { flashAt.set(k, now); flashWhy.set(k, 'новая связь'); }
+    });
+  }
+  lastSigs = sigs; lastProcs = procs; lastEdges = edges;
+}
+
+function renderMap() {
+  if (drag && drag.active) return;
+  const g = buildGraph(state); layout(g); window.__g = g; computeFlash(g);
+  const svg = $('#map'); svg.innerHTML = '';
+  svg.setAttribute('viewBox', `0 0 ${g.size.w} ${g.size.h}`);
+  ['ПРОЦЕССЫ (число соединений)', 'ИНТЕРФЕЙСЫ (метрика, DNS)', 'КУДА УХОДИТ ТРАФИК'].forEach((t, i) => { const x = el('text', { x: g.size.X[i] + 2, y: 16, class: 'col' }, svg); x.textContent = t; });
+  const eg = el('g', {}, svg), fg = el('g', {}, svg), ng = el('g', {}, svg);
+  const edgeEls = new Map();
+  g.edges.forEach(e => {
+    const warn = e.warn;
+    const p = el('path', { d: edgePath(e, g), class: 'edge' + (e.dashed ? ' dash' : ''), stroke: warn ? '#f5a623' : kc(e.kind), 'stroke-width': e.dashed ? 2 : Math.min(9, 1.2 + Math.log2(e.w + 1) * 1.5), opacity: e.dashed ? .95 : .55 }, eg);
+    const t = el('title', {}, p); t.textContent = (e.label || '') + (flashLeft(edgeKey(e)) > 0 && flashWhy.get(edgeKey(e)) ? '\nизменилось: ' + flashWhy.get(edgeKey(e)) : ''); edgeEls.set(e, p);
+    const fk = edgeKey(e); if (flashLeft(fk) > 0) { p.classList.add('flash'); p.style.animationDelay = '-' + ((FLASH_MS - flashLeft(fk)) / 1000).toFixed(2) + 's'; }
+    // живой трафик: бегущие штрихи по линии «интерфейс -> назначение», скорость анимации растёт с нагрузкой на интерфейс
+    const rt = !e.dashed && !e.mine && e.from.startsWith('if:') ? rates.get(e.from.slice(3)) : null, tot = rt && rt.rx != null ? rt.rx + rt.tx : 0;
+    if (tot > 2048) { const fl = el('path', { d: p.getAttribute('d'), class: 'flow' }, fg); fl.style.animationDuration = (tot > 1e7 ? .35 : tot > 1e6 ? .6 : tot > 1e5 ? 1 : tot > 1e4 ? 1.6 : 2.4) + 's'; p._flow = fl; }
+    if (e.mine) {
+      const st = linkSt(e.mine), dash = { planned: '3 8', claimed: '10 6', drift: '5 5', active: '' }[e.mine.status];
+      p.setAttribute('stroke', e.mine.status === 'active' ? '#ffd23f' : st[1]); p.setAttribute('stroke-width', 4.5); p.setAttribute('opacity', 1);
+      if (dash) p.setAttribute('stroke-dasharray', dash); p.setAttribute('stroke-linecap', 'round');
+    }
+  });
+  const nodeEls = new Map();
+  g.nodes.forEach(n => {
+    const col = n.kind === 'proc' || n.kind === 'dst' ? '#6b7790' : kc(n.kind);
+    const fl8 = flashLeft(n.id), grp = el('g', { class: 'node' + (selected === n.id ? ' sel' : '') + (fl8 > 0 ? ' flash' : ''), transform: `translate(${n.x},${n.y})`, opacity: n.dim ? .5 : 1 }, ng);
+    el('rect', { class: 'bg', width: n.w, height: n.h, rx: 8, fill: '#1b2230', stroke: n.alert ? '#ff5d5d' : col, 'stroke-width': n.alert ? 2.5 : 1.4 }, grp);
+    el('rect', { width: 5, height: n.h, rx: 2, fill: col }, grp);
+    if (fl8 > 0) grp.style.animationDelay = '-' + ((FLASH_MS - fl8) / 1000).toFixed(2) + 's';
+    const sc = STATUS_COLOR[n.st[0]];
+    el('circle', { cx: 16, cy: n.compact ? 12 : 13, r: 3.8, fill: sc, class: 'sdot' + (n.st[0] === 'bad' ? ' pulse' : '') }, grp);
+    const title = el('text', { x: 25, y: n.compact ? 16 : 17, class: 't' }, grp); title.textContent = clip(n.title, n.compact ? 24 : 29);
+    if (n.compact) title.setAttribute('style', 'font-size:11.5px');
+    if (n.tag) { const tg = el('text', { x: n.w - 10, y: n.compact ? 16 : 17, class: 'sub', 'text-anchor': 'end' }, grp); tg.textContent = clip(n.tag, n.compact ? 30 : 24); tg.setAttribute('fill', col); }
+    n.lines.forEach((l, i) => { const o = typeof l === 'string' ? { t: l } : l; const tx = el('text', { x: 14, y: 33 + i * 14, class: o.sub ? 'sub' : 'sub' }, grp); tx.textContent = clip(o.t, 46); if (o.c) tx.setAttribute('fill', o.c); else if (!o.sub) tx.setAttribute('fill', '#c7cfdd'); });
+    if (n.rateLine >= 0) { const h = rates.get(n.data.name) && rates.get(n.data.name).hist; if (h && h.length > 2) { const mx = Math.max(...h, 1), x0 = n.w - 92, y0 = 33 + n.rateLine * 14 + 2; el('polyline', { points: h.map((v, i) => (x0 + i * 82 / 39).toFixed(1) + ',' + (y0 - 11 * v / mx).toFixed(1)).join(' '), fill: 'none', stroke: '#9ad1ff', 'stroke-width': 1.2, 'stroke-opacity': .8, 'pointer-events': 'none' }, grp); } }
+    const tips = ['Состояние: ' + n.st[1]]; if (flashWhy.get(n.id) && fl8 > 0) tips.push('Изменилось: ' + flashWhy.get(n.id));
+    nodeEls.set(n.id, grp);
+    grp.dataset.id = n.id;
+    if (isDropTarget(n)) grp.dataset.iface = n.data.name;
+    const psrc = planSource(n);
+    if (psrc) { grp.classList.add('draggable'); grp.addEventListener('pointerdown', ev => startDrag(ev, n, psrc)); tips.push('Можно перетащить на интерфейс: составить план, как направить через него (' + psrc.label + ')'); }
+    el('title', {}, grp).textContent = tips.join('\n');
+    grp.addEventListener('mouseenter', () => highlight(g, n.id, nodeEls, edgeEls));
+    grp.addEventListener('mouseleave', () => highlight(g, selected, nodeEls, edgeEls));
+    grp.addEventListener('click', ev => { ev.stopPropagation(); if (suppressClick) return; selected = selected === n.id ? null : n.id; renderMap(); renderSide(); });
+  });
+  const bgz = el('g', {}, svg);
+  g.edges.filter(e => e.mine).forEach(e => {
+    // маленькая метка у начала связи: кружок с иконкой-звеном цепи; статус — цветом и подсказкой
+    const p = edgeEls.get(e), len = p.getTotalLength(), pt = p.getPointAtLength(Math.min(20, len * .3)), st = linkSt(e.mine);
+    const m = el('g', { transform: 'translate(' + pt.x + ',' + pt.y + ')', style: 'cursor:pointer' }, bgz);
+    el('circle', { r: 9, fill: '#1b2230', stroke: st[1], 'stroke-width': 1.6, 'stroke-dasharray': e.mine.status === 'planned' ? '3 2' : '' }, m);
+    const ic = el('g', { transform: 'rotate(-45)', fill: 'none', stroke: st[1], 'stroke-width': 1.5, style: 'pointer-events:none' }, m);
+    el('rect', { x: -6, y: -2.6, width: 7.5, height: 5.2, rx: 2.6 }, ic); el('rect', { x: -1.5, y: -2.6, width: 7.5, height: 5.2, rx: 2.6 }, ic);
+    m.addEventListener('click', ev => { ev.stopPropagation(); setTab('links'); });
+    const tt = el('title', {}, m); tt.textContent = 'Моя связь: ' + st[0] + ' — открыть вкладку «Связи»';
+  });
+  svg.onclick = () => { if (suppressClick) return; if (selected) { selected = null; renderMap(); renderSide(); } };
+  highlight(g, selected, nodeEls, edgeEls);
+}
+function highlight(g, id, nodeEls, edgeEls) {
+  if (!id || !g.byId[id]) { nodeEls.forEach(e => e.classList.remove('dimmed')); edgeEls.forEach(e => { e.classList.remove('dimmed'); if (e._flow) e._flow.classList.remove('dimmed'); }); return; }
+  const r = related(g, id);
+  nodeEls.forEach((e, k) => e.classList.toggle('dimmed', !r.ids.has(k)));
+  edgeEls.forEach((e, k) => { const on = r.eds.has(k); e.classList.toggle('dimmed', !on); if (e._flow) e._flow.classList.toggle('dimmed', !on); });
+}
+
+/* ------------------------------------------------------------ боковая панель */
+const kv = rows => '<div class="kv">' + rows.filter(r => r && r[1] !== undefined && r[1] !== '').map(([k, v]) => `<div>${esc(k)}</div><div>${v}</div>`).join('') + '</div>';
+const chip = (txt, color) => `<span class="chip" style="color:${color};border-color:${color}55">${esc(txt)}</span>`;
+const ifaceChips = ifs => Object.entries(ifs).sort((a, b) => b[1] - a[1]).map(([n, c]) => { const a = state.adapters.find(x => x.name === n); return chip(`${n} ×${c}`, a ? kc(a.kind) : (n.startsWith('proxy:') ? kc('proxy') : '#8b95a7')); }).join('');
+const dot = lvl => `<span class="dot ${lvl}"></span>`;
+
+function renderSide() {
+  const s = state, side = $('#side'); let h = '';
+  const n = selected && window.__g && window.__g.byId[selected];
+  if (n) h += nodeCard(n, s);
+  const ps = n && planSource(n, s);
+  if (ps) h += `<div class="card"><h3>План переопределения</h3><div class="muted">Перетащите этот узел на интерфейс или нажмите кнопку: карта покажет, как направить «${esc(ps.label)}» через другой интерфейс. Ничего не применяется.</div><div style="margin-top:8px"><button id="btnPlanNode">Составить план…</button></div></div>`;
+  h += servicesHtml(s);
+  side.innerHTML = h;
+  const bp = $('#btnPlanNode'); if (bp) bp.onclick = () => planOpen(planSource(n, s), null);
+}
+function nodeCard(n, s) {
+  let body = '';
+  if (n.type === 'iface' && n.data.kind) {
+    const a = n.data;
+    const routes = s.routes.notable.filter(r => r.iface === a.name).slice(0, 12);
+    body = kv([['Тип', esc(kl(a.kind))], ['Описание', esc(a.description)], ['Состояние', esc(a.status)], ['IPv4', esc(a.ipv4.join(', '))], ['IPv6', esc(a.ipv6.slice(0, 2).join(', '))],
+      ['Метрика интерфейса', a.metric], ['DNS-серверы', esc(a.dns.join(', ') || '—')], ['Шлюз', esc(a.gateway || '—')], ['Скорость канала', esc(a.speed)],
+      ['Трафик сейчас', rates.get(a.name) && rates.get(a.name).rx != null ? '↓ ' + fmtRate(rates.get(a.name).rx) + ' · ↑ ' + fmtRate(rates.get(a.name).tx) : '—'],
+      ['Всего с включения', a.rxBytes != null ? '↓ ' + (a.rxBytes / 1048576).toFixed(0) + ' МБ · ↑ ' + (a.txBytes / 1048576).toFixed(0) + ' МБ' : '']]);
+    if (routes.length) body += '<div class="muted" style="margin-top:8px">Маршруты на этом интерфейсе:</div><div class="mono">' + routes.map(r => `${esc(r.prefix)} → ${esc(r.nextHop)} (${r.effective})`).join('<br>') + '</div>';
+    const lr = links ? links.routes.filter(r => r.iface === a.name && !r.service && r.origin !== 'removed') : [];
+    if (lr.length) body += '<div class="muted" style="margin-top:8px">Маршруты по происхождению:</div><div class="mono">' + lr.slice(0, 14).map(r => `${esc(r.prefix)} → ${esc(r.nextHop)} ${badge(ORIGIN_ST[r.origin][0], ORIGIN_ST[r.origin][1])}`).join('<br>') + '</div>';
+    const ep = s.endpoints.filter(e => e.via === a.name);
+    if (ep.length) body += '<div class="muted" style="margin-top:8px">Через него достижимы:</div>' + ep.map(e => '<div>' + esc(e.label) + '</div>').join('');
+  } else if (n.type === 'proc') {
+    const p = n.data;
+    body = kv([['Соединений', p.total], ['Через', ifaceChips(p.ifaces)]]);
+    if (p.items) body += '<div style="margin-top:8px"><button id="expandBtn">Показать все процессы на карте</button></div><div class="muted" style="margin-top:8px">Процессы в группе (' + p.items.length + '):</div><div class="mono">' + p.items.map(r => esc(r.name) + ' <span class="muted">· ' + r.total + ' соед. · ' + esc(Object.entries(r.ifaces).sort((a, b) => b[1] - a[1]).map(x => x[0]).join(', ')) + '</span>').join('<br>') + '</div>';
+    if (p.remotes && p.remotes.length) body += '<div class="muted" style="margin-top:8px">Куда подключён:</div><div class="mono">' + p.remotes.map(r => `${esc(r.host || r.ip)}:${r.port} ×${r.count} <span class="muted">via ${esc(r.iface)}</span>`).join('<br>') + '</div>';
+  } else if (n.type === 'mylink') {
+    const L = n.data, st = linkSt(L);
+    body = kv([['Статус', badge(st[0], st[1])], ['Адреса', esc(L.prefixes.join(', '))], ['Через', esc(L.via)], ['Сейчас', L.paths.map(p => esc(p.prefix + ' → ' + (p.now || '—'))).join('<br>')]]) + '<div class="muted" style="margin-top:8px">Скрипты применения и отключения — на вкладке «Связи». Карта сама ничего не применяет.</div>';
+  } else if (n.type === 'proxy') {
+    body = kv([['Процесс', esc(n.data.process)], ['Порт', n.data.port], ['Пояснение', 'Приложения с настройкой прокси (или Windows-прокси) подключаются сюда, а ядро выносит трафик на удалённый сервер.']]);
+  } else if (n.type === 'dst') {
+    const w = n.data.what;
+    if (w === 'happ') body = kv([['Выходной узел (по сокетам xray)', n.data.upstream ? esc(n.data.upstream.ip + ':' + n.data.upstream.port) : 'не виден'], ['Совет', 'Кнопка «Внешний IP» покажет страну и адрес выхода через прокси.']]);
+    else if (w === 'internet') body = kv([['Пояснение', 'Трафик выходит через физический адаптер к вашему оператору без прокси.']]);
+    else if (w === 'netbird') body = netbirdPeers(s.services.netbird);
+    else if (w === 'tailscale') body = (s.services.tailscale.peers || []).filter(p => p.name).map(p => `<div>${dot(p.online ? 'ok' : 'warn')}${esc(p.name)} <span class="muted mono">${esc(p.ip || '')} ${esc(p.relay ? 'relay ' + p.relay : p.addr)}</span></div>`).join('') || '<div class="muted">пиров нет</div>';
+    else if (w === 'anyconnect') body = kv([['Состояние', esc(s.services.anyconnect.state)], ['Шлюз', esc(s.services.anyconnect.server)], ['История', esc((s.services.anyconnect.recent || []).join(' → '))]]);
+    else body = '<div class="muted">—</div>';
+  }
+  const rel = s.problems.filter(p => p.level !== 'info' && (p.title + p.detail).toLowerCase().includes(String(n.title).toLowerCase().split(' ')[0]));
+  return `<div class="card"><h3><span class="dot" style="background:${n.kind === 'proc' || n.kind === 'dst' ? '#6b7790' : kc(n.kind)}"></span>${esc(n.title)} <span class="muted" style="font-weight:400">${esc(n.tag || '')}</span></h3>${body}${rel.map(p => `<div class="${p.level}-t" style="margin-top:6px">⚠ ${esc(p.title)}</div>`).join('')}</div>`;
+}
+function netbirdPeers(nb) {
+  if (!nb.installed) return '<div class="muted">NetBird не установлен</div>';
+  return nb.peers.map(p => `<div>${dot(p.status === 'Connected' ? 'ok' : 'warn')}<b>${esc(p.name)}</b> <span class="muted mono">${esc(p.ip)} · ${esc(p.type && p.type !== '-' ? p.type : p.status)}${p.latencyMs ? ' · ' + p.latencyMs + ' мс' : ''}</span></div>`).join('') || '<div class="muted">пиров нет</div>';
+}
+function servicesHtml(s) {
+  const H = s.services.happ, C = s.services.clash, A = s.services.anyconnect, T = s.services.tailscale, N = s.services.netbird, P = s.services.systemProxy;
+  let h = '';
+  h += `<div class="card"><h3>${dot(H.tunUp ? 'ok' : (H.running ? 'warn' : ''))}Happ</h3>${kv([
+    ['Процессы', esc(H.processes.join(', ') || 'не запущен')], ['TUN', H.tunUp ? 'поднят' : 'нет'],
+    ['Профиль', H.routing ? esc(H.routing.name) : ''], ['globalProxy', H.routing ? (H.routing.globalProxy ? 'да — весь трафик в прокси' : 'нет') : ''],
+    ['Прямые IP', H.routing ? esc(H.routing.directIp.join(', ') || '—') : ''], ['Порядок правил', H.routing ? esc(H.routing.routingOrder) : ''],
+    ['DNS Happ', H.routing ? esc(H.routing.remoteDns) : '']])}</div>`;
+  h += `<div class="card"><h3>${dot(C.running ? (C.tunEnabled ? 'ok' : 'warn') : '')}Clash Verge</h3>${kv([['Ядро', C.running ? 'запущено' : 'нет'], ['TUN в настройках', C.configFound ? (C.tunEnabled ? 'включён' : 'выключен') : '?'], ['Системный прокси', C.configFound ? (C.systemProxyEnabled ? 'включён' : 'выключен') : '?'], ['Системный прокси Windows', P.enabled ? esc(P.server) : 'выключен']])}</div>`;
+  if (A.installed) h += `<div class="card"><h3>${dot(A.state === 'Connected' ? 'ok' : (A.state ? 'bad' : ''))}AnyConnect</h3>${kv([['Служба', esc(A.service)], ['Состояние', esc(A.state || '—')], ['История', esc((A.recent || []).join(' → '))], ['Шлюз', esc(A.server)], ['Адрес клиента', esc(A.clientIp)], ['Режим туннеля', esc(A.tunnelMode)]])}</div>`;
+  if (T.installed) h += `<div class="card"><h3>${dot(T.backend === 'Running' ? 'ok' : 'warn')}Tailscale</h3>${kv([['Состояние', esc(T.backend)], ['Адреса', esc((T.ips || []).join(', '))], ['Пиров', (T.peers || []).filter(p => p.name).length]])}</div>`;
+  if (N.installed) h += `<div class="card"><h3>${dot(N.daemonStatus === 'Connected' ? 'ok' : 'bad')}NetBird</h3>${kv([
+    ['Демон', esc(N.daemonStatus)], ['IP', esc(N.ip)], ['Management', N.management ? (N.management.connected ? '<span class="ok-t">подключён</span>' : '<span class="bad-t">нет</span> ' + esc(clip(N.management.error, 90))) : ''],
+    ['Signal', N.signal ? (N.signal.connected ? '<span class="ok-t">подключён</span>' : '<span class="bad-t">нет</span> ' + esc(clip(N.signal.error, 90))) : ''],
+    ['Relay/STUN', (N.relays || []).map(r => `<div style="display:flex;gap:6px;align-items:center">${dot(r.available ? 'ok' : 'warn')}<span>${esc(r.uri)}${r.available ? '' : ' <span class="muted">' + esc(clip(r.error, 120)) + '</span>'}</span></div>`).join('')],
+    ['Пиры', netbirdPeers(N)]])}</div>`;
+  return h;
+}
+
+/* ------------------------------------------------------------ вкладки с таблицами */
+function renderProcs() {
+  const q = ($('#procFilter') && $('#procFilter').value || '').toLowerCase();
+  const rows = state.connections.processes.filter(p => !q || p.name.toLowerCase().includes(q)).map(p => `<tr><td><b>${esc(p.name)}</b></td><td>${p.total}</td><td>${ifaceChips(p.ifaces)}</td><td class="mono">${p.remotes.slice(0, 6).map(r => `${esc(r.host || r.ip)}:${r.port}${r.count > 1 ? ' ×' + r.count : ''} <span class="muted">${esc(r.iface)}</span>`).join('<br>')}</td></tr>`).join('');
+  $('#tab-procs').innerHTML = `<div class="row"><input type="text" id="procFilter" placeholder="фильтр по имени процесса" value="${esc(q)}"><span class="muted">Только установленные TCP-соединения. Внутренние (127.0.0.1) не считаются: ${state.connections.loopback}. «proxy:порт» — соединение в локальный прокси. Для трафика внутри Happ TUN адаптер — happ-tun, реальный внешний узел виден только у самого xray.</span></div>
+  <table><tr><th>Процесс</th><th>Соед.</th><th>Через что</th><th>Куда (топ)</th></tr>${rows}</table>`;
+  const inp = $('#procFilter'); inp.oninput = () => { const v = inp.value; renderProcs(); const i2 = $('#procFilter'); i2.focus(); i2.setSelectionRange(v.length, v.length); };
+}
+function dnsResult(server) {
+  if (!state.dns.check) return '<span class="muted">не проверялся</span>';
+  const r = state.dns.check.filter(x => x.server === server);
+  if (!r.length) return '<span class="muted">—</span>';
+  return r.map(x => x.ok ? `<span class="ok-t">${esc(clip(x.name, 26))}: ${x.ms} мс</span>` : `<span class="bad-t">${esc(clip(x.name, 26))}: нет ответа</span>`).join('<br>');
+}
+function renderNet() {
+  const s = state;
+  const defs = s.routes.defaults.map((r, i) => `<tr><td class="mono">${esc(r.prefix)}</td><td class="mono">${esc(r.nextHop)}</td><td>${esc(r.iface)}</td><td>${r.routeMetric}</td><td>${r.effective}${i === 0 ? ' <span class="ok-t">← побеждает</span>' : ''}</td></tr>`).join('');
+  const dns = s.dns.servers.map((d, i) => `<tr><td>${i + 1}</td><td class="mono">${esc(d.ip)}</td><td>${esc(d.adapter)}</td><td>${d.metric}</td><td>${esc(d.via)} <span class="muted">${esc(d.nextHop || '')}</span></td><td>${dnsResult(d.ip)}</td></tr>`).join('');
+  const nrpt = s.dns.nrpt.map(r => `<tr><td class="mono">${esc(r.namespaces.join(', '))}</td><td class="mono">${esc(r.servers.join(', '))}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">правил нет</td></tr>';
+  const byIf = {}; s.routes.notable.forEach(r => (byIf[r.iface] = byIf[r.iface] || []).push(r));
+  const notable = Object.entries(byIf).map(([k, rs]) => `<tr><td><b>${esc(k)}</b></td><td class="mono">${rs.map(r => `${esc(r.prefix)} → ${esc(r.nextHop)} (${r.effective})`).join('<br>')}</td></tr>`).join('');
+  $('#tab-net').innerHTML = `
+  <h2>Маршруты по умолчанию (меньше «эффективная метрика» — приоритетнее)</h2>
+  <table><tr><th>Префикс</th><th>Следующий узел</th><th>Интерфейс</th><th>Метрика маршрута</th><th>Эффективная</th></tr>${defs}</table>
+  <p class="muted">Маршрут до 1.1.1.1 фактически идёт через «${esc(s.routes.internet.iface)}» (${esc(s.routes.internet.prefix)}).</p>
+  <h2>Порядок опроса DNS (Windows идёт по возрастанию метрики интерфейса)</h2>
+  <table><tr><th>№</th><th>Сервер</th><th>Адаптер</th><th>Метрика</th><th>Достижим через</th><th>Проверка (кнопка «Проверить DNS»)</th></tr>${dns}</table>
+  <h2>Правила NRPT (имена, которые идут на особые DNS)</h2>
+  <table><tr><th>Пространство имён</th><th>DNS-серверы</th></tr>${nrpt}</table>
+  <h2>Прочие маршруты по интерфейсам (без /32 и служебных)</h2>
+  <table><tr><th>Интерфейс</th><th>Маршруты (префикс → узел (метрика))</th></tr>${notable}</table>`;
+}
+function renderChecks() {
+  let h = '';
+  const d = state.dns.check;
+  h += '<h2>DNS-серверы</h2>';
+  if (d) { h += `<table><tr><th>Сервер</th><th>Адаптер</th><th>Метрика</th><th>Имя</th><th>Результат</th></tr>${d.map(r => `<tr><td class="mono">${esc(r.server)}</td><td>${esc(r.adapter)}</td><td>${r.metric}</td><td>${esc(r.name)}</td><td>${r.ok ? `<span class="ok-t">${esc(r.answer.join(', '))} · ${r.ms} мс</span>` : `<span class="bad-t">нет ответа (${r.ms} мс)</span>`}</td></tr>`).join('')}</table>`; } else h += '<p class="muted">Нажмите «Проверить DNS» вверху.</p>';
+  h += '<h2>Внешний IP</h2>';
+  if (checks.exit) h += `<table><tr><th>Путь</th><th>IP</th><th>Страна</th><th>Узел Cloudflare</th></tr>${checks.exit.map(x => `<tr><td>${esc(x.label)}</td><td class="mono">${x.ok ? esc(x.ip) : '<span class="bad-t">нет ответа</span>'}</td><td>${esc(x.country)}</td><td>${esc(x.colo)}</td></tr>`).join('')}</table>`; else h += '<p class="muted">Нажмите «Внешний IP» вверху. Запрос уйдёт на cloudflare.com/cdn-cgi/trace.</p>';
+  h += '<h2>Путь до цели</h2>';
+  const t = checks.trace;
+  if (!t) h += '<p class="muted">Введите домен или IPv4 вверху справа и нажмите «Путь».</p>';
+  else if (t.error) h += `<p class="bad-t">${esc(t.error)}</p>`;
+  else {
+    h += `<div class="card" style="margin-bottom:8px"><h3>${esc(t.target)}</h3>`;
+    if (t.system) h += kv([['Системный резолвер', t.system.error ? `<span class="bad-t">${esc(t.system.error)}</span>` : `<span class="ok-t">${esc(t.system.ips.join(', '))}</span> · ${t.system.ms} мс`]]);
+    if (t.nrpt) h += kv([['Перехват NRPT', `имя попадает под правило ${esc(t.nrpt.namespace)} → DNS ${esc(t.nrpt.servers.join(', '))}`]]);
+    h += '</div>';
+    if (t.perServer.length) h += `<table style="margin-bottom:8px"><tr><th>DNS-сервер (прямой запрос)</th><th>Адаптер, метрика</th><th>Через</th><th>Ответ</th></tr>${t.perServer.sort((a, b) => a.metric - b.metric).map(r => `<tr><td class="mono">${esc(r.server)}</td><td>${esc(r.adapter)}, ${r.metric}</td><td>${esc(r.via)}</td><td>${r.ok ? `<span class="ok-t">${esc(r.answer.join(', '))} · ${r.ms} мс</span>` : `<span class="bad-t">нет ответа (${r.ms} мс)</span>`}</td></tr>`).join('')}</table>`;
+    if (t.hops.length) h += `<table style="margin-bottom:8px"><tr><th>IP</th><th>Интерфейс</th><th>След. узел</th><th>Правило</th><th>Кто решает дальше</th></tr>${t.hops.map(x => `<tr><td class="mono">${esc(x.ip)}</td><td>${esc(x.iface)}</td><td class="mono">${esc(x.nextHop || 'on-link')}</td><td class="mono">${esc(x.prefix)}</td><td>${esc(x.decision)}</td></tr>`).join('')}</table>`;
+    if (t.probe) { const p = t.probe; h += kv([['TCP :443', p.tcp443.ok ? `<span class="ok-t">соединение установлено · ${p.tcp443.ms} мс</span>` : `<span class="bad-t">${esc(p.tcp443.error)}</span>`], ['HTTPS (curl)', p.https.ok ? `<span class="ok-t">код ${esc(p.https.code)}</span> · connect ${esc(p.https.connectSec)} с · tls ${esc(p.https.tlsSec)} с · всего ${esc(p.https.totalSec)} с · ${esc(p.https.remoteIp)}` : `<span class="bad-t">нет ответа (curl ${esc(p.https.curlExit)})</span>`]]); }
+    else if (!t.system || t.system.error) h += '<p class="bad-t">Имя не разрешилось — путь не строится.</p>';
+  }
+  $('#tab-checks').innerHTML = h;
+}
+/* ------------------------------------------------------------ монитор */
+const mon = { series: { dns: [], dnsnb: [], ping: [], wifi: [] }, events: [], gateway: '', zone: '', range: 5, ok: false };
+const monLast = { dns: 0, dnsnb: 0, ping: 0, wifi: 0 };
+let monNow = 0, monEvLast = 0;
+
+async function pollMonitor() {
+  try {
+    const m = await api(`/api/monitor?since=${Math.max(0, monNow - 3000)}&ev=${monEvLast}`);
+    monNow = m.now; mon.gateway = m.gateway; mon.zone = m.zone; mon.ok = true;
+    for (const k of Object.keys(mon.series)) {
+      const add = (m.series[k] || []).filter(x => x.t > monLast[k]);
+      if (add.length) { monLast[k] = add[add.length - 1].t; mon.series[k] = mon.series[k].concat(add); }
+      mon.series[k] = mon.series[k].filter(x => x.t > m.now - 21 * 60000);
+    }
+    for (const e of m.events) if (e.t > monEvLast) { mon.events.push(e); monEvLast = Math.max(monEvLast, e.t); }
+    mon.events = mon.events.slice(-600);
+  } catch (e) { mon.ok = false; }
+}
+
+function seriesStats(arr, fromT, field) {
+  const a = arr.filter(x => x.t >= fromT), ok = a.filter(x => x.ok);
+  const vals = ok.map(x => x[field]).sort((x, y) => x - y);
+  const q = p => vals.length ? vals[Math.min(vals.length - 1, Math.floor(p * vals.length))] : null;
+  let jit = null;
+  if (ok.length > 2) { let s = 0; for (let i = 1; i < ok.length; i++) s += Math.abs(ok[i][field] - ok[i - 1][field]); jit = s / (ok.length - 1); }
+  const avg = vals.length ? vals.reduce((s, x) => s + x, 0) / vals.length : null;
+  return { a, n: a.length, fail: a.length - ok.length, loss: a.length ? (a.length - ok.length) / a.length * 100 : 0, med: q(.5), p95: q(.95), max: vals.length ? vals[vals.length - 1] : null, min: vals.length ? vals[0] : null, avg, jit };
+}
+
+function chartSvg(arr, o) {
+  const W = 960, H = 132, L = 50, R = 10, T = 10, B = 20, now = monNow || Date.now(), span = o.range * 60000, t0 = now - span;
+  const a = arr.filter(x => x.t >= t0);
+  const vals = a.filter(x => x.ok).map(x => x[o.field]);
+  let ymax = o.ymax;
+  if (!ymax) { const m = Math.max(50, ...vals); ymax = [50, 100, 200, 500, 1000, 2000, 3000].find(s => s >= m) || 3000; }
+  const X = t => L + (t - t0) / span * (W - L - R), Y = v => T + (1 - Math.min(v, ymax) / ymax) * (H - T - B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
+  [0, .5, 1].forEach(f => { const y = T + (1 - f) * (H - T - B); s += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#2a3242"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" font-size="10" style="fill:#8b95a7">${Math.round(ymax * f)}${o.unit}</text>`; });
+  const step = o.range <= 5 ? 1 : o.range <= 10 ? 2 : 5;
+  for (let m = 0; m <= o.range; m += step) { const t = now - m * 60000, x = X(t); s += `<line x1="${x}" x2="${x}" y1="${H - B}" y2="${H - B + 4}" stroke="#46526b"/><text x="${x}" y="${H - 5}" text-anchor="middle" font-size="10" style="fill:#8b95a7">${new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</text>`; }
+  // события (кроме справочных) вертикальными линиями
+  mon.events.filter(e => e.t >= t0 && e.t <= now && e.level !== 'info').forEach(e => {
+    const c = e.level === 'bad' ? '#ff5d5d' : e.level === 'ok' ? '#4cd37b' : '#f5a623';
+    s += `<line x1="${X(e.t)}" x2="${X(e.t)}" y1="${T}" y2="${H - B}" stroke="${c}" stroke-dasharray="3 3" opacity=".8"><title>${esc(new Date(e.t).toLocaleTimeString('ru-RU') + ' ' + e.text)}</title></line>`;
+  });
+  // сбои: красные полосы
+  a.filter(x => !x.ok).forEach(x => { s += `<rect x="${X(x.t) - 2.5}" y="${T}" width="5" height="${H - T - B}" fill="#ff5d5d" opacity=".35"><title>${esc(new Date(x.t).toLocaleTimeString('ru-RU') + ' сбой: ' + (x.why || 'нет ответа') + (x.ms ? ' (' + x.ms + ' мс)' : ''))}</title></rect>`; });
+  // линия по успешным точкам; разрыв, если между точками больше 12 с (или был сбой)
+  let d = '', prev = null;
+  a.forEach(x => { if (!x.ok) { prev = null; return; } const p = `${X(x.t).toFixed(1)},${Y(x[o.field]).toFixed(1)}`; d += (prev && x.t - prev.t < 12000 ? 'L' : 'M') + p; prev = x; });
+  if (d) s += `<path d="${d}" fill="none" stroke="${o.color}" stroke-width="1.6"/>`;
+  a.filter(x => x.ok).forEach(x => { s += `<circle cx="${X(x.t).toFixed(1)}" cy="${Y(x[o.field]).toFixed(1)}" r="1.7" fill="${o.color}"><title>${esc(new Date(x.t).toLocaleTimeString('ru-RU') + ': ' + x[o.field] + o.unit)}</title></circle>`; });
+  if (!a.length) s += `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" style="fill:#8b95a7">данные собираются…</text>`;
+  return s + '</svg>';
+}
+
+function verdictFor(range) {
+  const f = (monNow || Date.now()) - range * 60000;
+  const d = seriesStats(mon.series.dns, f, 'ms'), nb = seriesStats(mon.series.dnsnb, f, 'ms'), p = seriesStats(mon.series.ping, f, 'ms'), w = seriesStats(mon.series.wifi, f, 'v');
+  if (d.n < 5 && p.n < 5) return [{ lvl: 'info', text: 'Данных пока мало — подождите около минуты.' }];
+  const out = [];
+  if (p.n >= 5 && (p.loss >= 5 || (p.med != null && p.med > 150))) out.push({ lvl: 'bad', text: `Канал до шлюза нестабилен: потери пинга ${p.loss.toFixed(0)}%, медиана ${p.med} мс. Сбои DNS и VPN вторичны — сначала проверьте сам канал (положение телефона, раздача, оператор).` });
+  else if (w.n >= 3 && w.avg != null && w.avg < 40) out.push({ lvl: 'warn', text: `Слабый сигнал Wi-Fi (в среднем ${w.avg.toFixed(0)}%): возможны потери и задержки.` });
+  if (d.n >= 5 && d.loss >= 10) out.push({ lvl: 'bad', text: `Системный резолвер не отвечает в ${d.loss.toFixed(0)}% попыток (${d.fail} из ${d.n}) при ${p.n >= 5 && p.loss < 5 ? 'исправном канале' : 'нестабильном канале'}. Смотрите порядок DNS и метрики адаптеров на вкладке «Маршруты и DNS»: мёртвый DNS-сервер у адаптера с низкой метрикой, перехват DNS со стороны VPN.` });
+  if (mon.zone && nb.n >= 3 && nb.loss >= 50 && d.loss < 10) out.push({ lvl: 'bad', text: `Имена в зоне NetBird (${mon.zone}) не разрешаются (${nb.fail} из ${nb.n} попыток), а обычные имена разрешаются. Запросы в этой зоне уходят правилом NRPT на DNS самого NetBird, и он не отвечает. Клиент не сможет заново найти свой сервер. Решение: запись сервера в hosts либо отдельный DNS-домен для пиров на стороне сервера. (Проверка идёт случайными именами в этой зоне.)` });
+  if (!out.length) out.push({ lvl: 'ok', text: 'За выбранный период сбоев не видно.' });
+  return out;
+}
+
+const fmt = (v, u = '') => v == null ? '—' : (Math.round(v * 10) / 10) + u;
+function renderMon() {
+  const R = mon.range, f = (monNow || Date.now()) - R * 60000;
+  const defs = [
+    { key: 'dns', title: 'Резолв имён через систему', sub: 'случайное имя в example.com: честный запрос без кэша, сбой = таймаут', color: '#4f9cff', field: 'ms', unit: ' мс' },
+    { key: 'dnsnb', title: `Резолв имён в зоне NetBird (${mon.zone})`, sub: 'запрос в этой зоне идёт через правило NRPT на DNS самого NetBird', color: '#4cd37b', field: 'ms', unit: ' мс' },
+    { key: 'ping', title: `Пинг шлюза ${mon.gateway || '—'}`, sub: 'качество канала до раздачи с телефона: потери и джиттер', color: '#e8d44d', field: 'ms', unit: ' мс' },
+    { key: 'wifi', title: 'Уровень сигнала Wi-Fi', sub: 'из netsh wlan show interfaces', color: '#b57bff', field: 'v', unit: '%', ymax: 100 },
+  ].filter(c => c.key !== 'dnsnb' || mon.zone);
+  let h = `<div class="row"><span class="seg">${[5, 10, 20].map(r => `<button data-r="${r}" class="${r === R ? 'on' : ''}">${r} мин</button>`).join('')}</span><span class="muted">Фоновый сбор идёт, пока запущен сервер (около 1,5–2 с на точку). Красные полосы — сбои, пунктир — события из журнала.</span></div>`;
+  h += verdictFor(R).map(v => `<div class="vd ${v.lvl}"><div>${v.lvl === 'bad' ? '⛔' : v.lvl === 'warn' ? '⚠' : v.lvl === 'ok' ? '✔' : 'ℹ'}</div><div>${esc(v.text)} <span class="muted">(эвристика, не доказательство)</span></div></div>`).join('');
+  defs.forEach(c => {
+    const st = seriesStats(mon.series[c.key], f, c.field);
+    let chips;
+    if (c.key === 'wifi') chips = `точек ${st.n} · среднее ${fmt(st.avg, '%')} · мин ${fmt(st.min, '%')} · макс ${fmt(st.max, '%')}`;
+    else chips = `точек ${st.n} · сбоев ${st.fail} (${st.loss.toFixed(0)}%) · медиана ${fmt(st.med, ' мс')} · p95 ${fmt(st.p95, ' мс')} · макс ${fmt(st.max, ' мс')}` + (c.key === 'ping' ? ` · джиттер ${fmt(st.jit, ' мс')}` : '');
+    const bad = c.key !== 'wifi' && st.n >= 3 && st.loss >= 10;
+    h += `<div class="mc"><h3><span class="dot ${bad ? 'bad' : (st.n ? 'ok' : '')}"></span> ${esc(c.title)}</h3><div class="st">${esc(c.sub)}</div><div class="st ${bad ? 'bad-t' : ''}">${esc(chips)}</div>${chartSvg(mon.series[c.key], { ...c, range: R })}</div>`;
+  });
+  $('#tab-mon').innerHTML = h;
+  $('#tab-mon').querySelectorAll('[data-r]').forEach(b => b.onclick = () => { mon.range = +b.dataset.r; renderMon(); });
+}
+
+const clientOnly = /^(Замечание|Happ|Clash|Tailscale|Страница|Проверка|План)/;
+function logLines() {
+  const rows = mon.events.map(e => ({ t: e.t, level: e.level, text: e.text, src: 'монитор' }))
+    .concat(events.filter(e => clientOnly.test(e.text)).map(e => ({ t: e.t.getTime(), level: e.level, text: e.text, src: 'страница' })));
+  return rows.sort((a, b) => b.t - a.t);
+}
+function renderLog() {
+  const rows = logLines();
+  $('#tab-log').innerHTML = `<div class="row"><button id="logCopy">Скопировать текстом</button><button id="logSave">Сохранить .txt</button><span class="muted">«монитор» пишется на диск (events.jsonl рядом со скриптом) и переживает перезапуск; «страница» — только пока открыта вкладка.</span></div>` +
+    (rows.map(e => `<div class="ev ${e.level}"><div class="muted mono">${esc(new Date(e.t).toLocaleString('ru-RU'))}<div class="src">${e.src}</div></div><div class="m">${esc(e.text)}</div></div>`).join('') || '<div class="muted">событий нет</div>');
+  const text = () => rows.slice().reverse().map(e => `${new Date(e.t).toLocaleString('ru-RU')}  [${e.level}]  ${e.text}`).join('\n');
+  $('#logCopy').onclick = () => navigator.clipboard.writeText(text()).then(() => { $('#logCopy').textContent = 'Скопировано'; setTimeout(() => { $('#logCopy').textContent = 'Скопировать текстом'; }, 1500); });
+  $('#logSave').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text()], { type: 'text/plain;charset=utf-8' })); a.download = 'netmap-journal.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+}
+function renderProblems() {
+  const p = state.problems, host = $('#problems'), order = { bad: 0, warn: 1, info: 2 };
+  const sorted = [...p].sort((a, b) => order[a.level] - order[b.level]);
+  const important = sorted.filter(x => x.level !== 'info'), infos = sorted.filter(x => x.level === 'info');
+  const show = important.concat(window.__showInfo ? infos : []);
+  host.innerHTML = show.map(x => `<div class="prob ${x.level}"><div>${x.level === 'bad' ? '⛔' : x.level === 'warn' ? '⚠' : 'ℹ'}</div><div><b>${esc(x.title)}</b> <span class="d">${esc(x.detail)}</span></div></div>`).join('') +
+    (infos.length ? `<button id="probToggle">${window.__showInfo ? 'скрыть' : 'показать'} справочные замечания (${infos.length})</button>` : '');
+  const t = $('#probToggle'); if (t) t.onclick = () => { window.__showInfo = !window.__showInfo; renderProblems(); };
+}
+
+/* ------------------------------------------------------------ план переопределения связи (только показывает, ничего не применяет) */
+let drag = null, suppressClick = false, planTexts = [];
+const planCtx = { proc: '', label: '' };
+
+// что можно «взять и перетащить» на интерфейс: процесс или узел с известным адресом
+function planSource(n, s) {
+  s = s || state;
+  if (!n || !s) return null;
+  if (n.type === 'proc' && n.id !== 'pr:*' && n.data && n.data.name) return { proc: n.data.name, label: 'процесс ' + n.data.name };
+  const ep = id => (s.endpoints || []).find(e => e.id === id);
+  if (n.id === 'dst:netbird') { const e = ep('netbird-control'); if (e) return { target: e.ip, label: 'сервер NetBird ' + e.ip }; }
+  if (n.id === 'dst:corp') { const e = ep('anyconnect-gateway'); if (e) return { target: e.ip, label: 'шлюз AnyConnect ' + e.ip }; }
+  if (n.id === 'dst:happ' && n.data && n.data.upstream) return { target: n.data.upstream.ip, label: 'выход Happ ' + n.data.upstream.ip };
+  return null;
+}
+const isDropTarget = n => n.type === 'iface' && n.data && n.data.kind && n.data.status === 'Up';
+
+function toast(text) {
+  let t = $('#toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+function startDrag(ev, n, src) {
+  if (ev.button !== 0 || drag) return;
+  ev.preventDefault();
+  const svg = $('#map');
+  const pt = e => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+  const d = drag = { n, src, x0: ev.clientX, y0: ev.clientY, active: false, over: null, ghost: null };
+  const anchor = () => n.col === 0 ? { x: n.x + n.w, y: n.y + n.h / 2 } : { x: n.x, y: n.y + n.h / 2 };
+  const setOver = grp => {
+    if (d.over && d.over !== grp) d.over.classList.remove('dropover');
+    d.over = grp || null; if (grp) grp.classList.add('dropover');
+  };
+  const finish = (drop) => {
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel); window.removeEventListener('keydown', onKey, true);
+    const was = d.active, over = d.over;
+    if (d.ghost) d.ghost.remove();
+    document.querySelectorAll('g.node.droptarget, g.node.dropover, g.node.dragsrc').forEach(x => x.classList.remove('droptarget', 'dropover', 'dragsrc'));
+    drag = null;
+    if (was) {
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 60);
+      if (drop && over) planOpen(src, over.dataset.iface, true);
+      else if (drop) toast('Бросьте узел на интерфейс (средняя колонка), чтобы составить план.');
+    }
+  };
+  const onMove = e => {
+    if (!d.active) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+      d.active = true;
+      d.ghost = el('path', { id: 'dragghost', fill: 'none' }, svg);
+      document.querySelectorAll('g.node').forEach(g => { if (g.dataset.iface) g.classList.add('droptarget'); if (g.dataset.id === n.id) g.classList.add('dragsrc'); });
+    }
+    const p = pt(e), a = anchor(), dx = Math.max(40, Math.abs(p.x - a.x) * .5) * (p.x >= a.x ? 1 : -1);
+    d.ghost.setAttribute('d', `M${a.x},${a.y} C${a.x + dx},${a.y} ${p.x - dx},${p.y} ${p.x},${p.y}`);
+    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const grp = t && t.closest ? t.closest('g.node[data-iface]') : null;
+    setOver(grp);
+  };
+  const onUp = () => finish(true);
+  const onCancel = () => finish(false);
+  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); finish(false); } };
+  window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel); window.addEventListener('keydown', onKey, true);
+}
+
+function planViaOptions(sel) {
+  const ups = state.adapters.filter(a => a.status === 'Up');
+  return ups.map(a => `<option value="${esc(a.name)}"${a.name === sel ? ' selected' : ''}>${esc(a.name)} (${esc(kl(a.kind))})</option>`).join('');
+}
+function planOpen(src, via, auto) {
+  planCtx.auto = !!auto;
+  planCtx.proc = (src && src.proc) || ''; planCtx.label = (src && src.label) || '';
+  $('#planOverlay').classList.remove('hidden');
+  $('#planForm').classList.remove('hidden'); $('#planTitle').textContent = 'План переопределения связи';
+  const phys = state.adapters.find(a => a.kind === 'physical' && a.status === 'Up');
+  $('#planVia').innerHTML = planViaOptions(via || (phys && phys.name));
+  const inp = $('#planTarget');
+  if (planCtx.proc) { inp.value = planCtx.label; inp.disabled = true; $('#planReset').classList.remove('hidden'); }
+  else { inp.value = (src && src.target) || ''; inp.disabled = false; $('#planReset').classList.add('hidden'); }
+  $('#planOut').innerHTML = '<p class="muted">Выберите интерфейс и нажмите «Составить план».</p>';
+  if (src && via) planRun(); else inp.focus();
+}
+function planClose() { $('#planOverlay').classList.add('hidden'); }
+async function planRun() {
+  const via = $('#planVia').value, target = planCtx.proc ? '' : $('#planTarget').value.trim();
+  const out = $('#planOut');
+  if (!planCtx.proc && !target) { out.innerHTML = '<p class="bad-t">Введите адрес, подсеть или домен.</p>'; return; }
+  if (!via) { out.innerHTML = '<p class="bad-t">Нет поднятого интерфейса для выбора.</p>'; return; }
+  out.innerHTML = '<p class="muted">Составляю план…</p>';
+  try {
+    const q = new URLSearchParams({ target, via, proc: planCtx.proc });
+    const j = await api('/api/plan?' + q);
+    const what = planCtx.proc ? planCtx.label : target;
+    logEv('info', `План: ${what} → «${via}» (только план, ничего не применено)`);
+    planLast = { target, via, proc: planCtx.proc };
+    out.innerHTML = planHtml(j);
+    // бросок на интерфейс сразу протягивает связь на карте (не применена); иначе линия бы исчезала
+    if (planCtx.auto && !j.error && document.getElementById('planSave')) document.getElementById('planSave').click();
+    planCtx.auto = false;
+  } catch (e) { planCtx.auto = false; out.innerHTML = `<p class="bad-t">Не удалось составить план: ${esc(e.message)}</p>`; }
+}
+function planHtml(j, opts) {
+  planTexts = [];
+  const copy = txt => { planTexts.push(txt); return `<button data-copy="${planTexts.length - 1}" style="float:right">Копировать</button>`; };
+  if (j.error) return `<p class="bad-t">${esc(j.error)}</p>`;
+  let h = `<p style="font-size:14px;margin:6px 0"><b>${esc(j.summary)}</b></p>`;
+  (j.notes || []).forEach(n => { h += `<p class="muted">${esc(n)}</p>`; });
+  if ((!opts || opts.save !== false) && (j.options || []).some(o => o.id === 'route-keep')) h += '<div class="opt" style="border-color:#8a7a2a"><b>Протянуть эту связь на карте</b><div class="muted" style="margin:4px 0 8px">Связь появится на карте золотой линией с маленькой меткой у начала (статус — цветом и в подсказке) и во вкладке «Связи». В системе ничего не изменится: скрипт выполняете вы, статус сменится сам, когда маршрут появится.</div><button id="planSave">Протянуть на карте</button> <span id="planSaveMsg"></span></div>';
+  if (j.items && j.items.length) {
+    h += '<table><tr><th>Адрес</th><th>Сейчас идёт через</th><th>Кто решает</th></tr>' + j.items.map(i =>
+      `<tr><td class="mono">${esc(i.prefix)}${i.role ? `<br><span class="muted">${esc(i.role)}</span>` : (i.host ? `<br><span class="muted">${esc(i.host)}</span>` : '')}</td><td>${esc(i.currentIface)}${i.already ? ' <span class="ok-t">(как хотите)</span>' : ''}<br><span class="muted mono">${esc(i.routePrefix)} → ${esc(i.nextHop || 'on-link')}</span></td><td>${esc(i.decision)}</td></tr>`).join('') + '</table>';
+  }
+  if (j.warnings && j.warnings.length) h += '<h2>Что учесть</h2>' + j.warnings.map(w => `<div class="pw">${dot(w.level === 'warn' ? 'warn' : '')}<span>${esc(w.text)}</span></div>`).join('');
+  if (j.options && j.options.length) {
+    h += '<h2>Как это сделать (выберите один способ)</h2>';
+    j.options.forEach(o => {
+      h += `<div class="opt"><b>${esc(o.title)}</b> ${o.admin ? '<span class="chip" style="color:#f5a623;border-color:#f5a62355">нужен администратор</span>' : '<span class="chip" style="color:#8b95a7;border-color:#8b95a755">без прав администратора</span>'}`;
+      h += `<div class="muted" style="margin:4px 0">${esc(o.how)}</div><div class="muted">Сколько держится: ${esc(o.persists)}</div>`;
+      h += `${copy(o.commands.join('\n'))}<div class="muted" style="margin-top:6px">Что выполнить</div><pre class="cmd">${esc(o.commands.join('\n'))}</pre>`;
+      h += `${copy(o.rollback.join('\n'))}<div class="muted">Как откатить</div><pre class="cmd">${esc(o.rollback.join('\n'))}</pre></div>`;
+    });
+  }
+  if (j.verify && j.verify.length) h += `<h2>Как проверить результат</h2>${copy(j.verify.join('\n'))}<pre class="cmd">${esc(j.verify.join('\n'))}</pre>`;
+  return h;
+}
+async function planCopy(btn) {
+  const txt = planTexts[+btn.dataset.copy] || '';
+  try { await navigator.clipboard.writeText(txt); }
+  catch { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch { } ta.remove(); }
+  const old = btn.textContent; btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = old; }, 1200);
+}
+$('#btnPlan').onclick = () => planOpen(null, null);
+$('#planClose').onclick = planClose;
+$('#planOverlay').addEventListener('click', e => { if (e.target.id === 'planOverlay') planClose(); });
+$('#planForm').onsubmit = ev => { ev.preventDefault(); planRun(); };
+$('#planReset').onclick = () => { planCtx.proc = ''; planCtx.label = ''; const i = $('#planTarget'); i.disabled = false; i.value = ''; $('#planReset').classList.add('hidden'); i.focus(); };
+$('#planOut').addEventListener('click', e => { const b = e.target.closest('button[data-copy]'); if (b) planCopy(b); });
+
+/* ------------------------------------------------------------ мои связи: статусы, вкладка «Связи» (карта сама ничего не применяет) */
+let links = null, planLast = null, linksSig = '';
+const routeFilter = { origin: 'all', service: false };
+const LINK_ST = { planned: ['не применена', '#f5a623'], active: ['действует', '#4cd37b'], claimed: ['отмечена вручную', '#8fb4ff'], drift: ['расходится', '#ff5d5d'] };
+const linkSt = L => (!L.viaUp && L.status !== 'planned') ? ['интерфейс недоступен', '#ff5d5d'] : (LINK_ST[L.status] || LINK_ST.planned);
+const ORIGIN_ST = { mine: ['моя', '#ffd23f'], baseline: ['по умолчанию', '#8fb4ff'], later: ['после запуска', '#f5a623'], removed: ['пропала', '#8b95a7'] };
+
+const apiPost = async (path, body) => {
+  const r = await fetch(path, { method: 'POST', headers: { 'X-NetMap': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}), cache: 'no-store' });
+  return r.json();
+};
+const badge = (txt, color) => `<span class="chip" style="color:${color};border-color:${color}88">${esc(txt)}</span>`;
+
+function diffLinks(a, b) {
+  if (!a || !b) return;
+  const old = new Map(a.mine.map(m => [m.id, m]));
+  for (const m of b.mine) {
+    const o = old.get(m.id);
+    if (o && o.status !== m.status) logEv(m.status === 'active' ? 'ok' : (m.status === 'drift' ? 'warn' : 'info'), `План: связь «${m.label}» → «${m.via}»: ${LINK_ST[o.status][0]} → ${LINK_ST[m.status][0]}`);
+  }
+  const lateOld = new Set(a.routes.filter(r => r.origin === 'later').map(r => r.prefix + '|' + r.ifIndex + '|' + r.nextHop));
+  b.routes.filter(r => r.origin === 'later' && !lateOld.has(r.prefix + '|' + r.ifIndex + '|' + r.nextHop) && !r.service).forEach(r => logEv('warn', `План: появился маршрут не от вас: ${r.prefix} через «${r.iface}» (следующий узел ${r.nextHop})`));
+}
+
+async function linkAction(act, id) {
+  try {
+    const L = links && links.mine.find(m => m.id === id);
+    if (act === 'apply') { planShow(`Применить связь «${L.label}» → «${L.via}»`, [
+      { id: 'route-trial', title: 'Пробный: маршрут на 60 секунд, потом сам удалится', admin: true, how: 'PowerShell от администратора. Проверьте путь за эти 60 с.', persists: 'нет: исчезает через 60 с', commands: [L.scripts.trial], rollback: [L.scripts.rollback] },
+      { id: 'route-keep', title: 'Оставить маршрут до перезагрузки', admin: true, how: 'PowerShell от администратора. После выполнения статус сменится на «действует» сам.', persists: 'до перезагрузки или сброса интерфейса; VPN-клиент может перебить его при переподключении', commands: [L.scripts.keep], rollback: [L.scripts.rollback] }]); return; }
+    if (act === 'rollback') { planShow(`Отключить связь «${L.label}» → «${L.via}»`, [
+      { id: 'route-del', title: 'Удалить маршрут этой связи', admin: true, how: 'PowerShell от администратора. Возвращает путь к тому, что было до связи. Запись в реестре остаётся: удалите её на вкладке «Связи» после отключения.', persists: '—', commands: [L.scripts.rollback], rollback: [L.scripts.keep] }]); return; }
+    if (act === 'rollbackall') { planShow('Отключить все мои связи (вернуться к исходной схеме)', [
+      { id: 'route-del-all', title: 'Удалить маршруты всех моих связей одним скриптом', admin: true, how: 'PowerShell от администратора. Удаляются только маршруты, созданные вашими связями; маршруты «по умолчанию» и чужие не затрагиваются.', persists: '—', commands: [links.rollbackAll || '# нечего отключать'], rollback: ['повторно применить нужные связи на вкладке «Связи»'] }]); return; }
+    if (act === 'forgetplanned') { const r = await apiPost('/api/links/forgetplanned'); toast(r.error || `Убрано не применённых связей: ${r.removed}`); }
+    else { const r = await apiPost('/api/links/' + act, { id }); if (r.error) { toast(r.error); return; } }
+    await refresh(true);
+  } catch (e) { toast('Не получилось: ' + e.message); }
+}
+
+function renderLinks() {
+  const host = $('#tab-links');
+  if (!links) { host.innerHTML = '<p class="muted">Данных о связях нет: сервер не ответил.</p>'; return; }
+  const sig = JSON.stringify([links, routeFilter]);
+  if (sig === linksSig) return;
+  linksSig = sig;
+  const L = links;
+  let h = '<h2>Мои связи</h2><p class="muted">Связь, которую вы протянули через «План…», хранится здесь и рисуется на карте золотой линией. Карта ничего не применяет: статус определяется сверкой с реальной таблицей маршрутов. «Не применена» — в системе ничего не изменилось; «действует» — маршрут есть и путь идёт через выбранный интерфейс.</p>';
+  if (!L.mine.length) h += '<p class="muted">Своих связей пока нет. Перетащите процесс или узел на интерфейс и нажмите «Протянуть на карте».</p>';
+  else {
+    h += '<table><tr><th>Статус</th><th>Связь</th><th>Через</th><th>Сейчас</th><th>Создана</th><th>Действия</th></tr>' + L.mine.map(m => {
+      const st = linkSt(m), active = m.status === 'active', applied = active || m.exact || m.status === 'claimed' || m.status === 'drift';
+      const note = active && !m.exact ? '<div class="muted">достигнуто без вашего маршрута (кем-то ещё)</div>' : '';
+      const btn = (act, label) => `<button data-link="${act}" data-id="${m.id}">${label}</button> `;
+      let acts = '';
+      if (!active) acts += btn('apply', 'Скрипт применения');
+      if (applied) acts += btn('rollback', 'Скрипт отключения');
+      if (m.status === 'planned') acts += btn('claim', 'Я применил вручную');
+      if (m.status === 'claimed') acts += btn('unclaim', 'Снять отметку');
+      acts += btn('forget', 'Удалить запись');
+      return `<tr><td>${badge(st[0], st[1])}${note}</td><td><b>${esc(m.label)}</b><div class="muted mono">${esc(m.prefixes.join(', '))}</div></td><td>${esc(m.via)}<div class="muted">${esc(kl(m.viaKind))}</div></td>` +
+        `<td class="mono">${m.paths.map(p => `${esc(p.prefix)} → ${esc(p.now || '—')}`).join('<br>')}</td><td class="muted">${esc(new Date(m.created).toLocaleString('ru-RU'))}</td><td>${acts}</td></tr>`;
+    }).join('') + '</table>';
+    h += `<div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap"><button data-link="rollbackall">Скрипт: отключить все мои</button><button data-link="forgetplanned">Убрать все не применённые</button></div>`;
+  }
+  h += '<h2>Маршруты в системе: чьи они</h2>';
+  h += `<p class="muted">Снимок «по умолчанию» снят при запуске карты (${esc(new Date(L.startedAt).toLocaleString('ru-RU'))}): всё, что уже существовало тогда, считается установленным программно, без вас. Маршруты, появившиеся позже, обычно создала программа (VPN-клиент). Только IPv4.</p>`;
+  const sel = (v, t) => `<option value="${v}"${routeFilter.origin === v ? ' selected' : ''}>${t}</option>`;
+  h += `<div style="margin:6px 0"><label>Показать: <select id="routeOrigin">${sel('all', 'все')}${sel('baseline', 'по умолчанию')}${sel('later', 'появились после запуска')}${sel('mine', 'мои')}${sel('removed', 'пропали после запуска')}</select></label> <label><input type="checkbox" id="routeService"${routeFilter.service ? ' checked' : ''}> служебные (подключённые сети)</label></div>`;
+  const rank = { mine: 0, later: 1, baseline: 2, removed: 3 };
+  const rows = L.routes.filter(r => (routeFilter.origin === 'all' || r.origin === routeFilter.origin) && (routeFilter.service || !r.service)).sort((a, b) => rank[a.origin] - rank[b.origin] || a.iface.localeCompare(b.iface) || a.prefix.localeCompare(b.prefix));
+  if (!rows.length) h += '<p class="muted">Нет маршрутов по этому фильтру.</p>';
+  else h += '<table><tr><th>Чья</th><th>Маршрут</th><th>Интерфейс</th><th>След. узел</th><th>Метрика</th><th></th></tr>' + rows.map((r, i) => {
+    const o = ORIGIN_ST[r.origin], a = state.adapters.find(x => x.name === r.iface);
+    const can = !r.service && r.origin !== 'removed' && r.origin !== 'mine';
+    return `<tr><td>${badge(o[0], o[1])}${r.firstSeen ? `<div class="muted">с ${esc(new Date(r.firstSeen).toLocaleTimeString('ru-RU'))}</div>` : ''}</td><td class="mono">${esc(r.prefix)}<div class="muted">${esc(r.kind === 'default' ? 'по умолчанию' : r.kind === 'host' ? 'один адрес' : 'подсеть')}</div></td>` +
+      `<td>${esc(r.iface)}${a ? `<div class="muted">${esc(kl(a.kind))}</div>` : ''}</td><td class="mono">${esc(r.nextHop)}</td><td>${r.metric}</td><td>${can ? `<button data-route="${esc(JSON.stringify([r.prefix, r.ifIndex, r.nextHop]))}">План отключения…</button>` : ''}</td></tr>`;
+  }).join('') + '</table>';
+  host.innerHTML = h;
+}
+
+$('#tab-links').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.link) linkAction(b.dataset.link, b.dataset.id);
+  else if (b.dataset.route) {
+    const [prefix, ifIndex, nextHop] = JSON.parse(b.dataset.route);
+    try {
+      const j = await api('/api/routeplan?' + new URLSearchParams({ prefix, ifIndex, nextHop }));
+      if (j.error) { toast(j.error); return; }
+      planShow(j.summary, j.options, j.warnings, j.verify);
+    } catch (err) { toast('Не получилось: ' + err.message); }
+  }
+});
+$('#tab-links').addEventListener('change', e => {
+  if (e.target.id === 'routeOrigin') routeFilter.origin = e.target.value;
+  if (e.target.id === 'routeService') routeFilter.service = e.target.checked;
+  renderLinks();
+});
+
+// показать готовые скрипты (без формы плана)
+function planShow(title, options, warnings, verify) {
+  planCtx.proc = ''; planCtx.label = '';
+  $('#planOverlay').classList.remove('hidden');
+  $('#planForm').classList.add('hidden');
+  $('#planTitle').textContent = 'Скрипты (копирование, карта их не выполняет)';
+  $('#planOut').innerHTML = planHtml({ summary: title, options: options || [], warnings: warnings || [], verify: verify || [], items: [], notes: [] }, { save: false });
+}
+
+// кнопка «Протянуть на карте» внутри плана
+$('#planOut').addEventListener('click', async e => {
+  const b = e.target.closest('#planSave'); if (!b || !planLast) return;
+  b.disabled = true;
+  try {
+    const r = await apiPost('/api/links/save', planLast);
+    const msg = $('#planSaveMsg');
+    if (r.error) { msg.className = 'bad-t'; msg.textContent = r.error; b.disabled = false; return; }
+    msg.className = 'ok-t'; msg.textContent = r.existing ? 'Такая связь уже есть в списке.' : 'Готово: связь нарисована на карте как «не применена». Выполните скрипт — статус сменится сам.';
+    logEv('info', `План: связь «${planLast.proc ? 'процесс ' + planLast.proc : planLast.target}» → «${planLast.via}» протянута на карте (не применена)`);
+    await refresh(true);
+  } catch (err) { b.disabled = false; toast('Не получилось: ' + err.message); }
+});
+
+/* ------------------------------------------------------------ главный цикл */
+function renderLegend() {
+  const present = new Set((state ? state.adapters : []).map(a => a.kind));
+  const legendKinds = KIND_ORDER.filter(k => k === 'physical' || (present.has(k) && !['hyperv', 'wsl', 'other'].includes(k))).concat(['proxy']);
+  $('#legend').innerHTML = legendKinds.map(k => `<span><i style="background:${kc(k)}"></i>${esc(kl(k))}</span>`).join('') +
+    '<span><i style="background:#4cd37b;border-radius:50%"></i>точка = состояние узла</span><span>✦ мигает = изменилось (8 с)</span><span>┈ бегущие штрихи = идёт трафик</span><span><i style="background:#ffd23f"></i>моя связь (пунктир — не применена)</span><span>━ толщина = число соединений</span><span style="color:#f5a623">╌ пунктир = через какой интерфейс идёт связь с сервером</span>';
+}
+function renderAll() {
+  $('#host').textContent = state.host; $('#stamp').textContent = new Date(state.ts).toLocaleTimeString('ru-RU');
+  renderProblems(); renderLegend();
+  if (tab === 'map') { renderMap(); renderSide(); }
+  if (tab === 'mon') renderMon();
+  if (tab === 'procs') renderProcs();
+  if (tab === 'net') renderNet();
+  if (tab === 'checks') renderChecks();
+  if (tab === 'links') renderLinks();
+  if (tab === 'log') renderLog();
+}
+async function refresh(manual) {
+  if (busy) return; busy = true; if (manual) $('#btnRefresh').disabled = true;
+  try { const [s, lk] = await Promise.all([api('/api/state'), api('/api/links').catch(() => null)]); applyConfig(s); diffLinks(links, lk); links = lk; prev = state; state = s; updateRates(prev, s); diffEvents(prev, s); $('#live').className = 'ok'; await pollMonitor(); renderAll(); }
+  catch (e) { $('#live').className = 'err'; $('#stamp').textContent = 'нет связи с сервером: ' + e.message; }
+  finally { busy = false; $('#btnRefresh').disabled = false; schedule(); }
+}
+function schedule() { clearTimeout(timer); if ($('#auto').checked) timer = setTimeout(() => refresh(false), 5000); }
+function setTab(t) {
+  tab = t; document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('hidden', x.id !== 'tab-' + t));
+  if (state) renderAll();
+}
+async function runCheck(btn, label, fn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = label + '…';
+  try { await fn(); } catch (e) { logEv('bad', 'Проверка не удалась: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$('#btnRefresh').onclick = () => refresh(true);
+$('#auto').onchange = schedule;
+$('#allProcs').checked = expandProcs;
+function setExpand(v) { expandProcs = v; $('#allProcs').checked = v; lsSet('nm.allProcs', v ? '1' : '0'); if (selected === 'pr:*') selected = null; if (state && tab === 'map') { renderMap(); renderSide(); } }
+$('#allProcs').onchange = e => setExpand(e.target.checked);
+$('#side').addEventListener('click', e => { if (e.target.id === 'expandBtn') setExpand(true); });
+$('#btnDns').onclick = () => runCheck($('#btnDns'), 'проверяю DNS', async () => { await api('/api/dnscheck'); await refresh(true); setTab('checks'); });
+$('#btnExit').onclick = () => runCheck($('#btnExit'), 'проверяю IP', async () => { checks.exit = await api('/api/exit'); setTab('checks'); renderAll(); });
+$('#traceForm').onsubmit = ev => { ev.preventDefault(); const v = $('#traceInput').value.trim(); if (!v) return; runCheck($('#traceForm button'), 'иду', async () => { checks.trace = await api('/api/trace?target=' + encodeURIComponent(v)); setTab('checks'); renderAll(); }); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#planOverlay').classList.contains('hidden')) { planClose(); return; } if (e.key === 'Escape' && selected) { selected = null; if (state && tab === 'map') { renderMap(); renderSide(); } } });
+{ const h = location.hash.slice(1); if (['map', 'mon', 'procs', 'net', 'checks', 'links', 'log'].includes(h)) tab = h; document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab)); document.querySelectorAll('.tab').forEach(x => x.classList.toggle('hidden', x.id !== 'tab-' + tab)); }
+refresh(true);
+</script>
+</body>
+</html>

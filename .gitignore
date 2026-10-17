@@ -1,0 +1,6 @@
+netmap.log
+events.jsonl
+netmap.links.json
+*.bak*
+*.tmp
+node_modules/
