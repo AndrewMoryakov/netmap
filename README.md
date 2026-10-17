@@ -100,6 +100,7 @@ The config is validated at startup; a broken JSON file, an invalid regular expre
 | `index.html` | the whole UI: map, tabs, "Plan…", "Links", time machine, share, demo |
 | `netmap.config.json` | settings |
 | `netmap.cmd` | double-click launcher |
+| `docs/` | screenshots and the GitHub Pages copy of `index.html` (run `sync-docs.cmd` after changing the page) |
 
 Created at runtime next to the scripts and ignored by git: `netmap.log`, `events.jsonl`, `netmap.links.json`.
 

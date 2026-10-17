@@ -87,6 +87,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File netmap.ps1 [-Port 47900] [-NoBrows
 | `index.html` | вся страница: карта, вкладки, «План…», «Связи», машина времени, «Поделиться», демо |
 | `netmap.config.json` | настройки |
 | `netmap.cmd` | запуск двойным щелчком |
+| `docs/` | скриншоты и копия `index.html` для GitHub Pages (после правки страницы запустите `sync-docs.cmd`) |
 
 Создаются при работе рядом со скриптами и не попадают в git: `netmap.log`, `events.jsonl`, `netmap.links.json`.
 
