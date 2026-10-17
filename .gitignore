@@ -3,4 +3,5 @@ events.jsonl
 netmap.links.json
 *.bak*
 *.tmp
+*.profile/
 node_modules/
